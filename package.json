@@ -1,0 +1,10 @@
+{
+  "name": "ff-threejs-poc",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "terser js/pointcloud.js js/main.js -o dist/ff-pointcloud.min.js"
+  },
+  "devDependencies": {
+    "terser": "^5.43.1"
+  }
+}
