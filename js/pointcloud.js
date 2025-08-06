@@ -13,16 +13,21 @@ class PointCloudScene {
     this.particles = null;
     this.particleCount = 5000;
 
+    //configure assetpath variable if localhost then use ../assets otherwise use https://superficialadam.github.io/fenton-site/assets
+    this.assetBaseUrl = window.location.hostname === '127.0.0.1' ? '../assets/' : 'https://superficialadam.github.io/fenton-site/assets/';
+
     // Asset loading
     this.textureLoader = new THREE.TextureLoader();
     //this.gltfLoader = new THREE.GLTFLoader();
     this.particleTexture = null;
-    this.realisticScenes = new Map();
+    this.colorTexture = null;
 
     this.init();
   }
 
   async init() {
+
+    console.log(this.assetBaseUrl);
     // Setup renderer
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -31,7 +36,7 @@ class PointCloudScene {
     this.camera.position.z = 5;
 
     // Try to load enhanced assets (non-blocking)
-    //   this.loadAssets();
+    this.loadAssets();
 
     // Create point cloud (works with or without assets)
     this.createPointCloud();
@@ -43,43 +48,60 @@ class PointCloudScene {
     this.animate();
   }
 
-  async loadAssets() {
-    // Skip if no asset base URL is configured
-    if (!window.ASSET_BASE_URL) {
-      console.log('→ No ASSET_BASE_URL configured, using basic materials');
+  loadAssets() {
+    // Load the test texture for particle coloring
+    this.textureLoader.load(
+      this.assetBaseUrl + 'testTexture.png',
+      (texture) => {
+        this.colorTexture = texture;
+        console.log('✓ Color texture loaded');
+
+        // Update material if point cloud already exists
+        if (this.pointCloud) {
+          this.updatePointCloudMaterial();
+        }
+
+        // Create cube now that texture is loaded
+        this.createCube();
+      },
+      undefined,
+      (error) => {
+        console.log('Failed to load color texture:', error);
+
+        // Even if texture fails, still create the cube (will use fallback)
+        this.createCube();
+      }
+    );
+  }
+
+  createCube() {
+    // Create a cube with the loaded texture
+    // Wait for the texture to load before creating the cube
+    if (!this.colorTexture && !this.particleTexture) {
+      // Texture not loaded yet, wait and try again
+      setTimeout(() => this.createCube(), 100);
       return;
     }
 
-    try {
-      // Try to load particle texture
-      const texture = await this.loadTexture('textures/particle.png');
-      this.particleTexture = texture;
-      console.log('✓ Enhanced particle texture loaded');
-
-      // Update existing material if point cloud already exists
-      if (this.pointCloud) {
-        this.pointCloud.material.map = texture;
-        this.pointCloud.material.blending = THREE.AdditiveBlending;
-        this.pointCloud.material.needsUpdate = true;
-      }
-    } catch (error) {
-      console.log('→ Using basic particle material (texture not found)');
-    }
-
-  }
-
-
-  async loadTexture(path) {
-    return new Promise((resolve, reject) => {
-      this.textureLoader.load(
-        window.ASSET_BASE_URL + path,
-        resolve,
-        undefined,
-        reject
-      );
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const material = new THREE.MeshBasicMaterial({
+      map: this.colorTexture || this.particleTexture,
+      transparent: true,
+      opacity: 0.8
     });
+
+    const cube = new THREE.Mesh(geometry, material);
+    cube.position.set(2, 0, 0); // Position it to the right of the point cloud
+    this.scene.add(cube);
   }
 
+  updatePointCloudMaterial() {
+    if (this.pointCloud && this.colorTexture) {
+      // Update the material to use the texture
+      this.pointCloud.material.map = this.colorTexture;
+      this.pointCloud.material.needsUpdate = true;
+    }
+  }
 
   createPointCloud() {
     const geometry = new THREE.BufferGeometry();
@@ -99,7 +121,7 @@ class PointCloudScene {
       positions[i3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
       positions[i3 + 2] = radius * Math.cos(phi);
 
-      // White particles
+      // White particles (will be overridden by texture if available)
       colors[i3] = 1;
       colors[i3 + 1] = 1;
       colors[i3 + 2] = 1;
@@ -117,7 +139,10 @@ class PointCloudScene {
     };
 
     // Add texture if available
-    if (this.particleTexture) {
+    if (this.colorTexture) {
+      materialConfig.map = this.colorTexture;
+      materialConfig.vertexColors = false; // Use texture colors instead of vertex colors
+    } else if (this.particleTexture) {
       materialConfig.map = this.particleTexture;
       materialConfig.blending = THREE.AdditiveBlending;
     }
