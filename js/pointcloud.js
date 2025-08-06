@@ -13,10 +13,16 @@ class PointCloudScene {
     this.particles = null;
     this.particleCount = 5000;
 
+    // Asset loading
+    this.textureLoader = new THREE.TextureLoader();
+    //this.gltfLoader = new THREE.GLTFLoader();
+    this.particleTexture = null;
+    this.realisticScenes = new Map();
+
     this.init();
   }
 
-  init() {
+  async init() {
     // Setup renderer
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -24,7 +30,10 @@ class PointCloudScene {
     // Setup camera
     this.camera.position.z = 5;
 
-    // Create point cloud
+    // Try to load enhanced assets (non-blocking)
+    //   this.loadAssets();
+
+    // Create point cloud (works with or without assets)
     this.createPointCloud();
 
     // Setup resize handler
@@ -33,6 +42,44 @@ class PointCloudScene {
     // Start render loop
     this.animate();
   }
+
+  async loadAssets() {
+    // Skip if no asset base URL is configured
+    if (!window.ASSET_BASE_URL) {
+      console.log('→ No ASSET_BASE_URL configured, using basic materials');
+      return;
+    }
+
+    try {
+      // Try to load particle texture
+      const texture = await this.loadTexture('textures/particle.png');
+      this.particleTexture = texture;
+      console.log('✓ Enhanced particle texture loaded');
+
+      // Update existing material if point cloud already exists
+      if (this.pointCloud) {
+        this.pointCloud.material.map = texture;
+        this.pointCloud.material.blending = THREE.AdditiveBlending;
+        this.pointCloud.material.needsUpdate = true;
+      }
+    } catch (error) {
+      console.log('→ Using basic particle material (texture not found)');
+    }
+
+  }
+
+
+  async loadTexture(path) {
+    return new Promise((resolve, reject) => {
+      this.textureLoader.load(
+        window.ASSET_BASE_URL + path,
+        resolve,
+        undefined,
+        reject
+      );
+    });
+  }
+
 
   createPointCloud() {
     const geometry = new THREE.BufferGeometry();
@@ -61,12 +108,21 @@ class PointCloudScene {
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-    const material = new THREE.PointsMaterial({
+    // Material setup
+    const materialConfig = {
       size: 0.02,
       vertexColors: true,
       transparent: true,
       opacity: 0.8
-    });
+    };
+
+    // Add texture if available
+    if (this.particleTexture) {
+      materialConfig.map = this.particleTexture;
+      materialConfig.blending = THREE.AdditiveBlending;
+    }
+
+    const material = new THREE.PointsMaterial(materialConfig);
 
     this.pointCloud = new THREE.Points(geometry, material);
     this.scene.add(this.pointCloud);
@@ -113,8 +169,10 @@ class PointCloudScene {
       positions[i3 + 2] += (targetZ - positions[i3 + 2]) * progress * 0.02;
     }
 
+
     this.pointCloud.geometry.attributes.position.needsUpdate = true;
   }
+
 
   onWindowResize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;
