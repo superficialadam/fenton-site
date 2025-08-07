@@ -1,4 +1,4 @@
-// Fixed Turbulent Point Field Effect - Proper timing handling
+// test Turbulent Point Field Effect - Proper timing handling
 import { WebGLRenderer, PerspectiveCamera, Scene, Clock } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { LumaSplatsThree, LumaSplatsSemantics } from '@lumaai/luma-web';
@@ -29,6 +29,7 @@ let splat = new LumaSplatsThree({
 // Remove background by showing only foreground layer
 splat.semanticsMask = LumaSplatsSemantics.FOREGROUND;
 
+//TODO: Add vortex force in the middle creating a rotating finished splat
 // Animation parameters
 const animationParams = {
   progress: 0.0,
@@ -42,6 +43,9 @@ const animationParams = {
   blackSplatsPercent: 0.0, // 0 = no black splats, 1 = all black splats
   saturation: 1.0,         // 0 = grayscale, 1 = original, 2 = oversaturated
   brightness: 1.0,         // 0 = black, 1 = original, 2 = overbright
+  influence: 1.0,          // 0 = no influence, 1 = full influence
+  dragMin: 0.5,            // Minimum drag amount (more responsive)
+  dragMax: 1.5,            // Maximum drag amount (more sluggish)
   animationSpeed: 0.001
 };
 
@@ -63,7 +67,10 @@ splat.onLoad = () => {
         u_colorFade: ['float', { value: animationParams.colorFade }],
         u_blackSplatsPercent: ['float', { value: animationParams.blackSplatsPercent }],
         u_saturation: ['float', { value: animationParams.saturation }],
-        u_brightness: ['float', { value: animationParams.brightness }]
+        u_brightness: ['float', { value: animationParams.brightness }],
+        u_influence: ['float', { value: animationParams.influence }],
+        u_dragMin: ['float', { value: animationParams.dragMin }],
+        u_dragMax: ['float', { value: animationParams.dragMax }]
       },
 
       // Curl noise for swirling patterns
@@ -104,10 +111,28 @@ splat.onLoad = () => {
                                       hash(i + vec3(1,0,1)), f.x),
                                   mix(hash(i + vec3(0,1,1)), 
                                       hash(i + vec3(1,1,1)), f.x), f.y), f.z);
-                }
-                
-                vec3 curlNoise(vec3 p, float time) {
-                    float eps = 0.1;
+                 }
+                 
+                 // Generate deterministic random values based on position
+                 float splatRandom(vec3 position, float seed) {
+                     return fract(sin(dot(position.xyz + seed, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
+                 }
+                 
+                 // Calculate drag factor for this splat
+                 float calculateDragFactor(vec3 position) {
+                     // Generate deterministic random drag value for this splat
+                     float splatDragRandom = splatRandom(position, 1.0);
+                     
+                     // Map to drag range (dragMin to dragMax)
+                     float dragAmount = mix(u_dragMin, u_dragMax, splatDragRandom);
+                     
+                     // Apply global influence as a multiplier
+                     // When influence = 0, no effect regardless of drag
+                     // When influence = 1, full drag effect
+                     return u_influence / dragAmount;
+                 }
+                 
+                 vec3 curlNoise(vec3 p, float time) {                    float eps = 0.1;
                     float timeScale = time * 0.02; // Very slow movement
                     
                     vec3 p1 = p + vec3(timeScale);
@@ -131,12 +156,19 @@ splat.onLoad = () => {
 
       getSplatTransform: /*glsl*/`
                 (vec3 position, uint layersBitmask) {
+                    // Calculate drag factor for this splat
+                    float dragFactor = calculateDragFactor(position);
+                    
                     // Generate swirling curl noise displacement with separate noise scale
                     vec3 curlOffset = curlNoise(position * u_noiseScale, u_time) * u_dispersionVolume * u_turbulenceStrength;
                     
                     // Smoother interpolation with cubic easing
                     float easing = u_progress * u_progress * u_progress * (u_progress * (u_progress * 6.0 - 15.0) + 10.0);
-                    vec3 finalOffset = curlOffset * (1.0 - easing);
+                    vec3 turbulentOffset = curlOffset * (1.0 - easing);
+                    
+                    // Apply drag factor to the turbulent offset
+                    // Higher drag = less movement, lower drag = more movement
+                    vec3 finalOffset = turbulentOffset * clamp(dragFactor, 0.0, 1.0);
                     
                     return mat4(
                         1.0, 0.0, 0.0, 0.0,
@@ -155,25 +187,32 @@ splat.onLoad = () => {
 
       getSplatColor: /*glsl*/`
                 (vec4 splatColor, vec3 splatPosition, uint layersBitmask) {
-                    vec3 color = splatColor.rgb;
+                    // Calculate drag factor for this splat (same as transform)
+                    float dragFactor = calculateDragFactor(splatPosition);
                     
-                    // Apply brightness first
-                    color *= u_brightness;
+                    vec3 originalColor = splatColor.rgb;
+                    vec3 processedColor = originalColor;
                     
-                    // Apply saturation adjustment
-                    vec3 hsv = rgb2hsv(color);
-                    hsv.y *= u_saturation; // Multiply saturation
-                    color = hsv2rgb(hsv);
+                    // Apply brightness - full effect scaled by drag factor
+                    float effectiveBrightness = mix(1.0, u_brightness, clamp(dragFactor, 0.0, 1.0));
+                    processedColor *= effectiveBrightness;
                     
-                    // Then apply global fade to black
-                    vec3 fadedColor = mix(color, vec3(0.0, 0.0, 0.0), u_colorFade);
+                    // Apply saturation adjustment - full effect scaled by drag factor
+                    vec3 hsv = rgb2hsv(processedColor);
+                    float effectiveSaturation = mix(1.0, u_saturation, clamp(dragFactor, 0.0, 1.0));
+                    hsv.y *= effectiveSaturation;
+                    processedColor = hsv2rgb(hsv);
                     
-                    // Finally selectively make some splats black based on position
+                    // Apply global fade to black - full effect scaled by drag factor
+                    float effectiveFade = u_colorFade * clamp(dragFactor, 0.0, 1.0);
+                    processedColor = mix(processedColor, vec3(0.0, 0.0, 0.0), effectiveFade);
+                    
+                    // Black splats control is ALWAYS applied (outside influence system)
                     float positionHash = fract(sin(dot(splatPosition.xy, vec2(12.9898, 78.233))) * 43758.5453);
                     float isBlackSplat = step(positionHash, u_blackSplatsPercent);
                     
                     // Mix between processed color and black based on selection
-                    vec3 finalColor = mix(fadedColor, vec3(0.0, 0.0, 0.0), isBlackSplat);
+                    vec3 finalColor = mix(processedColor, vec3(0.0, 0.0, 0.0), isBlackSplat);
                     
                     return vec4(finalColor, splatColor.a);
                 }
@@ -227,6 +266,9 @@ function updateUniforms() {
       if (uniforms.u_blackSplatsPercent) uniforms.u_blackSplatsPercent.value = animationParams.blackSplatsPercent;
       if (uniforms.u_saturation) uniforms.u_saturation.value = animationParams.saturation;
       if (uniforms.u_brightness) uniforms.u_brightness.value = animationParams.brightness;
+      if (uniforms.u_influence) uniforms.u_influence.value = animationParams.influence;
+      if (uniforms.u_dragMin) uniforms.u_dragMin.value = animationParams.dragMin;
+      if (uniforms.u_dragMax) uniforms.u_dragMax.value = animationParams.dragMax;
     }
   } catch (error) {
     console.warn('Error updating uniforms:', error);
@@ -521,6 +563,96 @@ font-family: Arial, sans-serif;
   brightnessContainer.appendChild(brightnessLabel);
   brightnessContainer.appendChild(brightnessSlider);
 
+  // Influence slider
+  const influenceContainer = document.createElement('div');
+  influenceContainer.style.marginBottom = '15px';
+
+  const influenceLabel = document.createElement('label');
+  influenceLabel.textContent = 'Influence: ';
+  influenceLabel.style.display = 'block';
+  influenceLabel.style.marginBottom = '5px';
+
+  const influenceSlider = document.createElement('input');
+  influenceSlider.type = 'range';
+  influenceSlider.min = '0';
+  influenceSlider.max = '1';
+  influenceSlider.step = '0.01';
+  influenceSlider.value = animationParams.influence.toString();
+  influenceSlider.style.width = '200px';
+
+  influenceSlider.addEventListener('input', (e) => {
+    animationParams.influence = parseFloat(e.target.value);
+    updateUniforms();
+    influenceLabel.textContent = `Influence: ${(animationParams.influence * 100).toFixed(0)}%`;
+  });
+
+  influenceContainer.appendChild(influenceLabel);
+  influenceContainer.appendChild(influenceSlider);
+
+  // Drag Min slider
+  const dragMinContainer = document.createElement('div');
+  dragMinContainer.style.marginBottom = '15px';
+
+  const dragMinLabel = document.createElement('label');
+  dragMinLabel.textContent = 'Drag Min: ';
+  dragMinLabel.style.display = 'block';
+  dragMinLabel.style.marginBottom = '5px';
+
+  const dragMinSlider = document.createElement('input');
+  dragMinSlider.type = 'range';
+  dragMinSlider.min = '0.1';
+  dragMinSlider.max = '3.0';
+  dragMinSlider.step = '0.1';
+  dragMinSlider.value = animationParams.dragMin.toString();
+  dragMinSlider.style.width = '200px';
+
+  dragMinSlider.addEventListener('input', (e) => {
+    animationParams.dragMin = parseFloat(e.target.value);
+    // Ensure min doesn't exceed max
+    if (animationParams.dragMin > animationParams.dragMax) {
+      animationParams.dragMax = animationParams.dragMin;
+      dragMaxSlider.value = animationParams.dragMax.toString();
+      dragMaxLabel.textContent = `Drag Max: ${animationParams.dragMax.toFixed(1)}`;
+    }
+    updateUniforms();
+    dragMinLabel.textContent = `Drag Min: ${animationParams.dragMin.toFixed(1)}`;
+  });
+
+  dragMinContainer.appendChild(dragMinLabel);
+  dragMinContainer.appendChild(dragMinSlider);
+
+  // Drag Max slider
+  const dragMaxContainer = document.createElement('div');
+  dragMaxContainer.style.marginBottom = '15px';
+
+  const dragMaxLabel = document.createElement('label');
+  dragMaxLabel.textContent = 'Drag Max: ';
+  dragMaxLabel.style.display = 'block';
+  dragMaxLabel.style.marginBottom = '5px';
+
+  const dragMaxSlider = document.createElement('input');
+  dragMaxSlider.type = 'range';
+  dragMaxSlider.min = '0.1';
+  dragMaxSlider.max = '3.0';
+  dragMaxSlider.step = '0.1';
+  dragMaxSlider.value = animationParams.dragMax.toString();
+  dragMaxSlider.style.width = '200px';
+
+  dragMaxSlider.addEventListener('input', (e) => {
+    animationParams.dragMax = parseFloat(e.target.value);
+    // Ensure max doesn't go below min
+    if (animationParams.dragMax < animationParams.dragMin) {
+      animationParams.dragMin = animationParams.dragMax;
+      dragMinSlider.value = animationParams.dragMin.toString();
+      dragMinLabel.textContent = `Drag Min: ${animationParams.dragMin.toFixed(1)}`;
+    }
+    updateUniforms();
+    dragMaxLabel.textContent = `Drag Max: ${animationParams.dragMax.toFixed(1)}`;
+  });
+
+  dragMaxContainer.appendChild(dragMaxLabel);
+  dragMaxContainer.appendChild(dragMaxSlider);
+
   const toggleContainer = document.createElement('div');
 
   controlsContainer.appendChild(sliderContainer);
@@ -530,6 +662,9 @@ font-family: Arial, sans-serif;
   controlsContainer.appendChild(blackSplatsContainer);
   controlsContainer.appendChild(saturationContainer);
   controlsContainer.appendChild(brightnessContainer);
+  controlsContainer.appendChild(influenceContainer);
+  controlsContainer.appendChild(dragMinContainer);
+  controlsContainer.appendChild(dragMaxContainer);
   controlsContainer.appendChild(noiseScaleContainer);
   controlsContainer.appendChild(dispersionContainer);
   controlsContainer.appendChild(strengthContainer);
@@ -600,6 +735,24 @@ const splatControls = {
     if (!isShaderHooksReady) return;
     animationParams.brightness = value || 1.0;
     updateUniforms();
+  },
+
+  setInfluence: (value) => {
+    if (!isShaderHooksReady) return;
+    animationParams.influence = value || 1.0;
+    updateUniforms();
+  },
+
+  setDragMin: (value) => {
+    if (!isShaderHooksReady) return;
+    animationParams.dragMin = value || 0.5;
+    updateUniforms();
+  },
+
+  setDragMax: (value) => {
+    if (!isShaderHooksReady) return;
+    animationParams.dragMax = value || 1.5;
+    updateUniforms();
   }
 };
 
@@ -627,5 +780,8 @@ console.log('  window.splatControls.setColorFade(0.0-1.0)');
 console.log('  window.splatControls.setBlackSplatsPercent(0.0-1.0)');
 console.log('  window.splatControls.setSaturation(0.0-3.0)');
 console.log('  window.splatControls.setBrightness(0.0-3.0)');
-console.log('🔧 Try: splatControls.setSaturation(0.5)');
-console.log('🔧 Try: splatControls.setBrightness(1.5)');
+console.log('  window.splatControls.setInfluence(0.0-1.0)');
+console.log('  window.splatControls.setDragMin(0.1-3.0)');
+console.log('  window.splatControls.setDragMax(0.1-3.0)');
+console.log('🔧 Try: splatControls.setInfluence(0.5)');
+console.log('🔧 Try: splatControls.setDragMin(0.3)');
