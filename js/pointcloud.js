@@ -22,6 +22,8 @@ class PointCloudScene {
     this.particleTexture = null;
     this.colorTexture = null;
 
+    this.pcdLoader = new THREE.PCDLoader();
+
     this.init();
   }
 
@@ -37,9 +39,11 @@ class PointCloudScene {
 
     // Try to load enhanced assets (non-blocking)
     this.loadAssets();
+    //Load point cloud data (non-blocking)
+    this.loadPointcloud();
 
     // Create point cloud (works with or without assets)
-    this.createPointCloud();
+    //this.createPointCloud();
 
     // Setup resize handler
     window.addEventListener('resize', () => this.onWindowResize());
@@ -62,7 +66,6 @@ class PointCloudScene {
         }
 
         // Create cube now that texture is loaded
-        this.createCube();
       },
       undefined,
       (error) => {
@@ -74,25 +77,13 @@ class PointCloudScene {
     );
   }
 
-  createCube() {
-    // Create a cube with the loaded texture
-    // Wait for the texture to load before creating the cube
-    if (!this.colorTexture && !this.particleTexture) {
-      // Texture not loaded yet, wait and try again
-      setTimeout(() => this.createCube(), 100);
-      return;
-    }
 
-    const geometry = new THREE.BoxGeometry(1, 1, 1);
-    const material = new THREE.MeshBasicMaterial({
-      map: this.colorTexture || this.particleTexture,
-      transparent: true,
-      opacity: 0.8
+  loadPointcloud() {
+    this.pcdLoader.load(this.assetBaseUrl + 'Zaghetto.pcd', (points) => {
+      points.geometry.center();
+      points.geometry.scale(10, 10, 10); // Scale down the point cloud
+      this.scene.add(points);
     });
-
-    const cube = new THREE.Mesh(geometry, material);
-    cube.position.set(2, 0, 0); // Position it to the right of the point cloud
-    this.scene.add(cube);
   }
 
   updatePointCloudMaterial() {
