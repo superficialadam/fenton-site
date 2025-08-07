@@ -40,6 +40,8 @@ const animationParams = {
   splatOpacity: 1.0,       // Splat opacity multiplier
   colorFade: 0.0,          // 0 = original colors, 1 = black
   blackSplatsPercent: 0.0, // 0 = no black splats, 1 = all black splats
+  saturation: 1.0,         // 0 = grayscale, 1 = original, 2 = oversaturated
+  brightness: 1.0,         // 0 = black, 1 = original, 2 = overbright
   animationSpeed: 0.001
 };
 
@@ -59,7 +61,9 @@ splat.onLoad = () => {
         u_splatSize: ['float', { value: animationParams.splatSize }],
         u_splatOpacity: ['float', { value: animationParams.splatOpacity }],
         u_colorFade: ['float', { value: animationParams.colorFade }],
-        u_blackSplatsPercent: ['float', { value: animationParams.blackSplatsPercent }]
+        u_blackSplatsPercent: ['float', { value: animationParams.blackSplatsPercent }],
+        u_saturation: ['float', { value: animationParams.saturation }],
+        u_brightness: ['float', { value: animationParams.brightness }]
       },
 
       // Curl noise for swirling patterns
@@ -68,6 +72,23 @@ splat.onLoad = () => {
                     p = fract(p * 0.3183099 + 0.1);
                     p *= 17.0;
                     return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+                }
+                
+                // RGB to HSV conversion
+                vec3 rgb2hsv(vec3 c) {
+                    vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+                    vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+                    vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+                    float d = q.x - min(q.w, q.y);
+                    float e = 1.0e-10;
+                    return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+                }
+                
+                // HSV to RGB conversion
+                vec3 hsv2rgb(vec3 c) {
+                    vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+                    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+                    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
                 }
                 
                 float noise(vec3 x) {
@@ -134,14 +155,24 @@ splat.onLoad = () => {
 
       getSplatColor: /*glsl*/`
                 (vec4 splatColor, vec3 splatPosition, uint layersBitmask) {
-                    // First apply global fade to black
-                    vec3 fadedColor = mix(splatColor.rgb, vec3(0.0, 0.0, 0.0), u_colorFade);
+                    vec3 color = splatColor.rgb;
                     
-                    // Then selectively make some splats black based on position
+                    // Apply brightness first
+                    color *= u_brightness;
+                    
+                    // Apply saturation adjustment
+                    vec3 hsv = rgb2hsv(color);
+                    hsv.y *= u_saturation; // Multiply saturation
+                    color = hsv2rgb(hsv);
+                    
+                    // Then apply global fade to black
+                    vec3 fadedColor = mix(color, vec3(0.0, 0.0, 0.0), u_colorFade);
+                    
+                    // Finally selectively make some splats black based on position
                     float positionHash = fract(sin(dot(splatPosition.xy, vec2(12.9898, 78.233))) * 43758.5453);
                     float isBlackSplat = step(positionHash, u_blackSplatsPercent);
                     
-                    // Mix between faded color and black based on selection
+                    // Mix between processed color and black based on selection
                     vec3 finalColor = mix(fadedColor, vec3(0.0, 0.0, 0.0), isBlackSplat);
                     
                     return vec4(finalColor, splatColor.a);
@@ -194,6 +225,8 @@ function updateUniforms() {
       if (uniforms.u_splatOpacity) uniforms.u_splatOpacity.value = animationParams.splatOpacity;
       if (uniforms.u_colorFade) uniforms.u_colorFade.value = animationParams.colorFade;
       if (uniforms.u_blackSplatsPercent) uniforms.u_blackSplatsPercent.value = animationParams.blackSplatsPercent;
+      if (uniforms.u_saturation) uniforms.u_saturation.value = animationParams.saturation;
+      if (uniforms.u_brightness) uniforms.u_brightness.value = animationParams.brightness;
     }
   } catch (error) {
     console.warn('Error updating uniforms:', error);
@@ -227,7 +260,7 @@ function createUIControls() {
     padding: 20px;
     border-radius: 10px;
     color: white;
-    font-family: Arial, sans-serif;
+font-family: Arial, sans-serif;
     z-index: 1000;
   `;
 
@@ -258,12 +291,12 @@ function createUIControls() {
   // Splat Size slider
   const sizeSliderContainer = document.createElement('div');
   sizeSliderContainer.style.marginBottom = '15px';
-  
+
   const sizeSliderLabel = document.createElement('label');
   sizeSliderLabel.textContent = 'Splat Size: ';
   sizeSliderLabel.style.display = 'block';
   sizeSliderLabel.style.marginBottom = '5px';
-  
+
   const sizeSlider = document.createElement('input');
   sizeSlider.type = 'range';
   sizeSlider.min = '0.1';
@@ -271,7 +304,7 @@ function createUIControls() {
   sizeSlider.step = '0.1';
   sizeSlider.value = animationParams.splatSize.toString();
   sizeSlider.style.width = '200px';
-  
+
   sizeSlider.addEventListener('input', (e) => {
     animationParams.splatSize = parseFloat(e.target.value);
     updateUniforms();
@@ -284,12 +317,12 @@ function createUIControls() {
   // Splat Opacity slider
   const opacitySliderContainer = document.createElement('div');
   opacitySliderContainer.style.marginBottom = '15px';
-  
+
   const opacitySliderLabel = document.createElement('label');
   opacitySliderLabel.textContent = 'Splat Opacity: ';
   opacitySliderLabel.style.display = 'block';
   opacitySliderLabel.style.marginBottom = '5px';
-  
+
   const opacitySlider = document.createElement('input');
   opacitySlider.type = 'range';
   opacitySlider.min = '0.0';
@@ -297,7 +330,7 @@ function createUIControls() {
   opacitySlider.step = '0.1';
   opacitySlider.value = animationParams.splatOpacity.toString();
   opacitySlider.style.width = '200px';
-  
+
   opacitySlider.addEventListener('input', (e) => {
     animationParams.splatOpacity = parseFloat(e.target.value);
     updateUniforms();
@@ -309,12 +342,12 @@ function createUIControls() {
   // Noise Scale slider
   const noiseScaleContainer = document.createElement('div');
   noiseScaleContainer.style.marginBottom = '15px';
-  
+
   const noiseScaleLabel = document.createElement('label');
   noiseScaleLabel.textContent = 'Noise Scale: ';
   noiseScaleLabel.style.display = 'block';
   noiseScaleLabel.style.marginBottom = '5px';
-  
+
   const noiseScaleSlider = document.createElement('input');
   noiseScaleSlider.type = 'range';
   noiseScaleSlider.min = '0';
@@ -322,7 +355,7 @@ function createUIControls() {
   noiseScaleSlider.step = '0.01';
   noiseScaleSlider.value = animationParams.noiseScale.toString();
   noiseScaleSlider.style.width = '200px';
-  
+
   noiseScaleSlider.addEventListener('input', (e) => {
     animationParams.noiseScale = parseFloat(e.target.value);
     updateUniforms();
@@ -335,12 +368,12 @@ function createUIControls() {
   // Dispersion Volume slider
   const dispersionContainer = document.createElement('div');
   dispersionContainer.style.marginBottom = '15px';
-  
+
   const dispersionLabel = document.createElement('label');
   dispersionLabel.textContent = 'Dispersion Volume: ';
   dispersionLabel.style.display = 'block';
   dispersionLabel.style.marginBottom = '5px';
-  
+
   const dispersionSlider = document.createElement('input');
   dispersionSlider.type = 'range';
   dispersionSlider.min = '0.1';
@@ -348,7 +381,7 @@ function createUIControls() {
   dispersionSlider.step = '0.1';
   dispersionSlider.value = animationParams.dispersionVolume.toString();
   dispersionSlider.style.width = '200px';
-  
+
   dispersionSlider.addEventListener('input', (e) => {
     animationParams.dispersionVolume = parseFloat(e.target.value);
     updateUniforms();
@@ -361,12 +394,12 @@ function createUIControls() {
   // Turbulence Strength slider
   const strengthContainer = document.createElement('div');
   strengthContainer.style.marginBottom = '15px';
-  
+
   const strengthLabel = document.createElement('label');
   strengthLabel.textContent = 'Turbulence Strength: ';
   strengthLabel.style.display = 'block';
   strengthLabel.style.marginBottom = '5px';
-  
+
   const strengthSlider = document.createElement('input');
   strengthSlider.type = 'range';
   strengthSlider.min = '0.1';
@@ -374,7 +407,7 @@ function createUIControls() {
   strengthSlider.step = '0.1';
   strengthSlider.value = animationParams.turbulenceStrength.toString();
   strengthSlider.style.width = '200px';
-  
+
   strengthSlider.addEventListener('input', (e) => {
     animationParams.turbulenceStrength = parseFloat(e.target.value);
     updateUniforms();
@@ -387,12 +420,12 @@ function createUIControls() {
   // Color Fade slider
   const colorFadeContainer = document.createElement('div');
   colorFadeContainer.style.marginBottom = '15px';
-  
+
   const colorFadeLabel = document.createElement('label');
   colorFadeLabel.textContent = 'Fade to Black: ';
   colorFadeLabel.style.display = 'block';
   colorFadeLabel.style.marginBottom = '5px';
-  
+
   const colorFadeSlider = document.createElement('input');
   colorFadeSlider.type = 'range';
   colorFadeSlider.min = '0';
@@ -400,7 +433,7 @@ function createUIControls() {
   colorFadeSlider.step = '0.01';
   colorFadeSlider.value = animationParams.colorFade.toString();
   colorFadeSlider.style.width = '200px';
-  
+
   colorFadeSlider.addEventListener('input', (e) => {
     animationParams.colorFade = parseFloat(e.target.value);
     updateUniforms();
@@ -413,12 +446,12 @@ function createUIControls() {
   // Black Splats Percentage slider
   const blackSplatsContainer = document.createElement('div');
   blackSplatsContainer.style.marginBottom = '15px';
-  
+
   const blackSplatsLabel = document.createElement('label');
   blackSplatsLabel.textContent = 'Black Splats %: ';
   blackSplatsLabel.style.display = 'block';
   blackSplatsLabel.style.marginBottom = '5px';
-  
+
   const blackSplatsSlider = document.createElement('input');
   blackSplatsSlider.type = 'range';
   blackSplatsSlider.min = '0';
@@ -426,7 +459,7 @@ function createUIControls() {
   blackSplatsSlider.step = '0.01';
   blackSplatsSlider.value = animationParams.blackSplatsPercent.toString();
   blackSplatsSlider.style.width = '200px';
-  
+
   blackSplatsSlider.addEventListener('input', (e) => {
     animationParams.blackSplatsPercent = parseFloat(e.target.value);
     updateUniforms();
@@ -436,6 +469,58 @@ function createUIControls() {
   blackSplatsContainer.appendChild(blackSplatsLabel);
   blackSplatsContainer.appendChild(blackSplatsSlider);
 
+  // Saturation slider
+  const saturationContainer = document.createElement('div');
+  saturationContainer.style.marginBottom = '15px';
+
+  const saturationLabel = document.createElement('label');
+  saturationLabel.textContent = 'Saturation: ';
+  saturationLabel.style.display = 'block';
+  saturationLabel.style.marginBottom = '5px';
+
+  const saturationSlider = document.createElement('input');
+  saturationSlider.type = 'range';
+  saturationSlider.min = '0';
+  saturationSlider.max = '3';
+  saturationSlider.step = '0.01';
+  saturationSlider.value = animationParams.saturation.toString();
+  saturationSlider.style.width = '200px';
+
+  saturationSlider.addEventListener('input', (e) => {
+    animationParams.saturation = parseFloat(e.target.value);
+    updateUniforms();
+    saturationLabel.textContent = `Saturation: ${animationParams.saturation.toFixed(2)}`;
+  });
+
+  saturationContainer.appendChild(saturationLabel);
+  saturationContainer.appendChild(saturationSlider);
+
+  // Brightness slider
+  const brightnessContainer = document.createElement('div');
+  brightnessContainer.style.marginBottom = '15px';
+
+  const brightnessLabel = document.createElement('label');
+  brightnessLabel.textContent = 'Brightness: ';
+  brightnessLabel.style.display = 'block';
+  brightnessLabel.style.marginBottom = '5px';
+
+  const brightnessSlider = document.createElement('input');
+  brightnessSlider.type = 'range';
+  brightnessSlider.min = '0';
+  brightnessSlider.max = '3';
+  brightnessSlider.step = '0.01';
+  brightnessSlider.value = animationParams.brightness.toString();
+  brightnessSlider.style.width = '200px';
+
+  brightnessSlider.addEventListener('input', (e) => {
+    animationParams.brightness = parseFloat(e.target.value);
+    updateUniforms();
+    brightnessLabel.textContent = `Brightness: ${animationParams.brightness.toFixed(2)}`;
+  });
+
+  brightnessContainer.appendChild(brightnessLabel);
+  brightnessContainer.appendChild(brightnessSlider);
+
   const toggleContainer = document.createElement('div');
 
   controlsContainer.appendChild(sliderContainer);
@@ -443,6 +528,8 @@ function createUIControls() {
   controlsContainer.appendChild(opacitySliderContainer);
   controlsContainer.appendChild(colorFadeContainer);
   controlsContainer.appendChild(blackSplatsContainer);
+  controlsContainer.appendChild(saturationContainer);
+  controlsContainer.appendChild(brightnessContainer);
   controlsContainer.appendChild(noiseScaleContainer);
   controlsContainer.appendChild(dispersionContainer);
   controlsContainer.appendChild(strengthContainer);
@@ -501,6 +588,18 @@ const splatControls = {
     if (!isShaderHooksReady) return;
     animationParams.blackSplatsPercent = value || 0.0;
     updateUniforms();
+  },
+
+  setSaturation: (value) => {
+    if (!isShaderHooksReady) return;
+    animationParams.saturation = value || 1.0;
+    updateUniforms();
+  },
+
+  setBrightness: (value) => {
+    if (!isShaderHooksReady) return;
+    animationParams.brightness = value || 1.0;
+    updateUniforms();
   }
 };
 
@@ -526,5 +625,7 @@ console.log('  window.splatControls.setSplatSize(0.1-5.0)');
 console.log('  window.splatControls.setSplatOpacity(0.0-2.0)');
 console.log('  window.splatControls.setColorFade(0.0-1.0)');
 console.log('  window.splatControls.setBlackSplatsPercent(0.0-1.0)');
-console.log('🔧 Try: splatControls.setColorFade(0.5)');
-console.log('🔧 Try: splatControls.setBlackSplatsPercent(0.3)');
+console.log('  window.splatControls.setSaturation(0.0-3.0)');
+console.log('  window.splatControls.setBrightness(0.0-3.0)');
+console.log('🔧 Try: splatControls.setSaturation(0.5)');
+console.log('🔧 Try: splatControls.setBrightness(1.5)');
