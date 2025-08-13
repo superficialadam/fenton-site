@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Splat Scroll Demo</title>
+  <style>
+    :root {
+      --border: 2px dashed rgba(255,255,255,0.35);
+      --fg: #e7e7e7;
+      --bg: #000;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      color: var(--fg);
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+    canvas#bg-splats {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background: #000;
+    }
+    .wrap {
+      position: relative;
+      z-index: 1;
+    }
+    section {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      border: var(--border);
+      box-sizing: border-box;
+      padding: 2rem;
+    }
+    section h2 {
+      margin: 0;
+      font-size: clamp(1.5rem, 4vw, 3rem);
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      opacity: 0.9;
+    }
+    section.hero {
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.00));
+      border-color: rgba(255,255,255,0.2);
+    }
+    .hint {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: 16px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      opacity: 0.6;
+      text-align: center;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="bg-splats"></canvas>
+
+  <div class="wrap">
+    <section class="hero" id="hero">
+      <h2>Hero (no splat here)</h2>
+    </section>
+
+    <section id="sec-1">
+      <h2>Section 1 — Splat 1</h2>
+    </section>
+    <section id="sec-2">
+      <h2>Section 2 — Splat 2</h2>
+    </section>
+    <section id="sec-3">
+      <h2>Section 3 — Splat 3</h2>
+    </section>
+    <section id="sec-4">
+      <h2>Section 4 — Splat 4</h2>
+    </section>
+  </div>
+
+  <div class="hint">Scroll to see each section’s splat appear → hold FORM (0.40–0.60) → disperse</div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.157.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.157.0/examples/jsm/",
+        "@lumaai/luma-web": "https://unpkg.com/@lumaai/luma-web@0.2.0/dist/library/luma-web.module.js"
+      }
+    }
+  </script>
+  <script type="module" src="./splatScroll.js"></script>
+</body>
+</html>
