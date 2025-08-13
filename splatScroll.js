@@ -34,6 +34,9 @@ const sources = [
   'https://lumalabs.ai/capture/369f2055-ca06-498e-9c55-40110d332909'
 ];
 
+// ===== Debug switch to toggle dispersion effect =====
+const ENABLE_DISPERSION = false; // Set to false to disable dispersion for debugging
+
 // ===== Individual transformation parameters for each splat =====
 const splatTransforms = [
   { position: [0, 0, 0], rotation: [0.2, 0, 0.2], scale: [1, 1, 1] }, // Splat 1
@@ -215,10 +218,16 @@ function buildSplat(source, index) {
         getSplatTransform: /*glsl*/`
           (vec3 position, uint layersBitmask) {
             float dragFactor = calculateDragFactor(position);
-            vec3 curlOffset = curlNoise(position * u_noiseScale, u_time) * u_dispersionVolume * u_turbulenceStrength;
-            float easing = u_progress * u_progress * u_progress * (u_progress * (u_progress * 6.0 - 15.0) + 10.0);
-            vec3 turbulentOffset = curlOffset * (1.0 - easing);
-            vec3 finalOffset = turbulentOffset * clamp(dragFactor, 0.0, 1.0);
+            vec3 finalOffset = vec3(0.0);
+            
+            // Only apply dispersion if enabled
+            if (${ENABLE_DISPERSION ? 'true' : 'false'}) {
+              vec3 curlOffset = curlNoise(position * u_noiseScale, u_time) * u_dispersionVolume * u_turbulenceStrength;
+              float easing = u_progress * u_progress * u_progress * (u_progress * (u_progress * 6.0 - 15.0) + 10.0);
+              vec3 turbulentOffset = curlOffset * (1.0 - easing);
+              finalOffset = turbulentOffset * clamp(dragFactor, 0.0, 1.0);
+            }
+            
             return mat4(
               1.0, 0.0, 0.0, 0.0,
               0.0, 1.0, 0.0, 0.0,
@@ -281,7 +290,13 @@ function buildSplat(source, index) {
 
 // ===== Create and preload all splats =====
 const splats = sources.map((src, index) => buildSplat(src, index));
-splats.forEach(s => s.visible = false);
+
+// When dispersion is disabled, make all splats visible immediately for debugging
+if (!ENABLE_DISPERSION) {
+  splats.forEach(s => s.visible = true);
+} else {
+  splats.forEach(s => s.visible = false);
+}
 
 let loadedCount = 0;
 const allLoaded = new Promise(resolve => {
@@ -303,16 +318,16 @@ function applyUniforms(splat, uniforms) {
   if (u.u_time) u.u_time.value = clock.getElapsedTime();
 
   // set all known uniforms (noiseScale forced to 0.88)
-  if (u.u_progress) u.u_progress.value = uniforms.u_progress;
+  if (u.u_progress) u.u_progress.value = ENABLE_DISPERSION ? uniforms.u_progress : 1.0; // Show formed state when dispersion is disabled
   if (u.u_turbulenceStrength) u.u_turbulenceStrength.value = uniforms.u_turbulenceStrength;
   if (u.u_turbulenceScale) u.u_turbulenceScale.value = uniforms.u_turbulenceScale;
   if (u.u_noiseScale) u.u_noiseScale.value = 0.88;
   if (u.u_dispersionVolume) u.u_dispersionVolume.value = uniforms.u_dispersionVolume;
   if (u.u_splatSize) u.u_splatSize.value = uniforms.u_splatSize;
   if (u.u_splatOpacity) u.u_splatOpacity.value = uniforms.u_splatOpacity;
-  if (u.u_colorFade) u.u_colorFade.value = uniforms.u_colorFade;
-  if (u.u_blackSplatsPercent) u.u_blackSplatsPercent.value = uniforms.u_blackSplatsPercent;
-  if (u.u_saturation) u.u_saturation.value = uniforms.u_saturation;
+  if (u.u_colorFade) u.u_colorFade.value = ENABLE_DISPERSION ? uniforms.u_colorFade : 0.0; // No color fade when dispersion is disabled
+  if (u.u_blackSplatsPercent) u.u_blackSplatsPercent.value = ENABLE_DISPERSION ? uniforms.u_blackSplatsPercent : 0.0; // No black splats when dispersion is disabled
+  if (u.u_saturation) u.u_saturation.value = ENABLE_DISPERSION ? uniforms.u_saturation : 1.0; // Full saturation when dispersion is disabled
   if (u.u_brightness) u.u_brightness.value = uniforms.u_brightness;
   if (u.u_influence) u.u_influence.value = uniforms.u_influence;
   if (u.u_dragMin) u.u_dragMin.value = uniforms.u_dragMin;
@@ -384,16 +399,40 @@ let warmFrames = 0;
     warmFrames++;
     if (warmFrames > 10 && !warmedUp) {
       warmedUp = true;
-      // remove everything; start with none active (we might be on hero)
-      splats.forEach(s => { s.visible = false; scene.remove(s); });
-      loop();
-      renderer.setAnimationLoop(null);
+      // When dispersion is disabled, keep all splats visible for debugging
+      if (!ENABLE_DISPERSION) {
+        // Keep all splats visible and in the scene
+        loop();
+        renderer.setAnimationLoop(null);
+      } else {
+        // remove everything; start with none active (we might be on hero)
+        splats.forEach(s => { s.visible = false; scene.remove(s); });
+        loop();
+        renderer.setAnimationLoop(null);
+      }
     }
   });
 })();
 
 function loop() {
   function frame() {
+    // If dispersion is disabled, show all splats for debugging
+    if (!ENABLE_DISPERSION) {
+      // Make all splats visible and apply default uniforms
+      splats.forEach((splat, index) => {
+        if (!splat.visible) {
+          splat.visible = true;
+          scene.add(splat);
+        }
+        // Apply default formed state uniforms
+        const formedState = { ...PRESETS.FORM };
+        applyUniforms(splat, formedState);
+      });
+      renderer.render(scene, camera);
+      requestAnimationFrame(frame);
+      return;
+    }
+
     // If we're still in hero (center is above section 1), render nothing
     const firstRect = sections[0].getBoundingClientRect();
     const inHero = firstRect.top > window.innerHeight / 2;
