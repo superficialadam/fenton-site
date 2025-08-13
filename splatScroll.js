@@ -36,7 +36,7 @@ const sources = [
 
 // ===== Individual transformation parameters for each splat =====
 const splatTransforms = [
-  { position: [0, 0, 0], rotation: [0, 0, 0.2], scale: [1, 1, 1] }, // Splat 1
+  { position: [0, 0, 0], rotation: [0.2, 0, 0.2], scale: [1, 1, 1] }, // Splat 1
   { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }, // Splat 2
   { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }, // Splat 3
   { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }  // Splat 4
@@ -132,6 +132,148 @@ function buildSplat(source, index) {
     splat.position.set(transform.position[0], transform.position[1], transform.position[2]);
     splat.rotation.set(transform.rotation[0], transform.rotation[1], transform.rotation[2]);
     splat.scale.set(transform.scale[0], transform.scale[1], transform.scale[2]);
+
+    // Keep the shader hooks for turbulence and dispersion effects
+    splat.setShaderHooks({
+      vertexShaderHooks: {
+        additionalUniforms: {
+          u_time: ['float', { value: 0.0 }],
+          u_progress: ['float', { value: 0.0 }],
+          u_turbulenceStrength: ['float', { value: BASE.u_turbulenceStrength }],
+          u_turbulenceScale: ['float', { value: BASE.u_turbulenceScale }],
+          u_noiseScale: ['float', { value: BASE.u_noiseScale }],
+          u_dispersionVolume: ['float', { value: BASE.u_dispersionVolume }],
+          u_splatSize: ['float', { value: BASE.u_splatSize }],
+          u_splatOpacity: ['float', { value: BASE.u_splatOpacity }],
+          u_colorFade: ['float', { value: BASE.u_colorFade }],
+          u_blackSplatsPercent: ['float', { value: BASE.u_blackSplatsPercent }],
+          u_saturation: ['float', { value: BASE.u_saturation }],
+          u_brightness: ['float', { value: BASE.u_brightness }],
+          u_influence: ['float', { value: BASE.u_influence }],
+          u_dragMin: ['float', { value: BASE.u_dragMin }],
+          u_dragMax: ['float', { value: BASE.u_dragMax }]
+        },
+
+        // noise, color space helpers, curl noise, drag behavior
+        additionalGlobals: /*glsl*/`
+          float hash(vec3 p) {
+            p = fract(p * 0.3183099 + 0.1);
+            p *= 17.0;
+            return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+          }
+
+          vec3 rgb2hsv(vec3 c) {
+            vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+            vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+            vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+            float d = q.x - min(q.w, q.y);
+            float e = 1.0e-10;
+            return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+          }
+
+          vec3 hsv2rgb(vec3 c) {
+            vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+            vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+            return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+          }
+
+          float noise(vec3 x) {
+            vec3 i = floor(x);
+            vec3 f = fract(x);
+            f = f * f * (3.0 - 2.0 * f);
+
+            return mix(mix(mix(hash(i + vec3(0,0,0)),
+                               hash(i + vec3(1,0,0)), f.x),
+                           mix(hash(i + vec3(0,1,0)),
+                               hash(i + vec3(1,1,0)), f.x), f.y),
+                       mix(mix(hash(i + vec3(0,0,1)),
+                               hash(i + vec3(1,0,1)), f.x),
+                           mix(hash(i + vec3(0,1,1)),
+                               hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+          }
+
+          float splatRandom(vec3 position, float seed) {
+            return fract(sin(dot(position.xyz + seed, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
+          }
+
+          float calculateDragFactor(vec3 position) {
+            float splatDragRandom = splatRandom(position, 1.0);
+            float dragAmount = mix(u_dragMin, u_dragMax, splatDragRandom);
+            return u_influence / dragAmount;
+          }
+
+          vec3 curlNoise(vec3 p, float time) {
+            float eps = 0.1;
+            float timeScale = time * 0.02;
+            float nx = (noise(p + vec3(0.0, eps, 0.0) + vec3(timeScale)) - noise(p + vec3(0.0, -eps, 0.0) + vec3(timeScale))) / (2.0 * eps);
+            float ny = (noise(p + vec3(0.0, 0.0, eps) + vec3(timeScale)) - noise(p + vec3(0.0, 0.0, -eps) + vec3(timeScale))) / (2.0 * eps);
+            float nz = (noise(p + vec3(eps, 0.0, 0.0) + vec3(timeScale)) - noise(p + vec3(-eps, 0.0, 0.0) + vec3(timeScale))) / (2.0 * eps);
+            return vec3(nx, ny, nz) * 0.5;
+          }
+        `,
+
+        getSplatTransform: /*glsl*/`
+          (vec3 position, uint layersBitmask) {
+            float dragFactor = calculateDragFactor(position);
+            vec3 curlOffset = curlNoise(position * u_noiseScale, u_time) * u_dispersionVolume * u_turbulenceStrength;
+            float easing = u_progress * u_progress * u_progress * (u_progress * (u_progress * 6.0 - 15.0) + 10.0);
+            vec3 turbulentOffset = curlOffset * (1.0 - easing);
+            vec3 finalOffset = turbulentOffset * clamp(dragFactor, 0.0, 1.0);
+            return mat4(
+              1.0, 0.0, 0.0, 0.0,
+              0.0, 1.0, 0.0, 0.0,
+              0.0, 0.0, 1.0, 0.0,
+              finalOffset.x, finalOffset.y, finalOffset.z, 1.0
+            );
+          }
+        `,
+
+        getSplatOpacity: /*glsl*/`
+          (vec3 position, uint layersBitmask) {
+            return mix(0.2, 1.0, u_progress) * u_splatOpacity;
+          }
+        `,
+
+        getSplatColor: /*glsl*/`
+          (vec4 splatColor, vec3 splatPosition, uint layersBitmask) {
+            float dragFactor = calculateDragFactor(splatPosition);
+
+            vec3 originalColor = splatColor.rgb;
+            vec3 processedColor = originalColor;
+
+            float effectiveBrightness = mix(1.0, u_brightness, clamp(dragFactor, 0.0, 1.0));
+            processedColor *= effectiveBrightness;
+
+            vec3 hsv = rgb2hsv(processedColor);
+            float effectiveSaturation = mix(1.0, u_saturation, clamp(dragFactor, 0.0, 1.0));
+            hsv.y *= effectiveSaturation;
+            processedColor = hsv2rgb(hsv);
+
+            float effectiveFade = u_colorFade * clamp(dragFactor, 0.0, 1.0);
+            processedColor = mix(processedColor, vec3(0.0, 0.0, 0.0), effectiveFade);
+
+            float positionHash = fract(sin(dot(splatPosition.xy, vec2(12.9898, 78.233))) * 43758.5453);
+            float isBlackSplat = step(positionHash, u_blackSplatsPercent);
+
+            vec3 finalColor = mix(processedColor, vec3(0.0, 0.0, 0.0), isBlackSplat);
+            return vec4(finalColor, splatColor.a);
+          }
+        `
+      },
+
+      fragmentShaderHooks: {
+        additionalUniforms: {
+          u_splatSize: ['float', { value: BASE.u_splatSize }],
+          u_splatOpacity: ['float', { value: BASE.u_splatOpacity }]
+        },
+
+        getFragmentColor: /*glsl*/`
+          (vec4 fragColor) {
+            return vec4(fragColor.rgb, fragColor.a * u_splatOpacity);
+          }
+        `
+      }
+    });
   };
 
   return splat;
