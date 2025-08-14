@@ -60,8 +60,6 @@
     }
     .debug-panel {
       position: fixed;
-      top: 20px;
-      right: 20px;
       background: rgba(0, 0, 0, 0.8);
       border: 1px solid rgba(255, 255, 255, 0.2);
       border-radius: 8px;
@@ -71,6 +69,67 @@
       color: #fff;
       z-index: 1000;
       min-width: 200px;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    .debug-panel.camera-debug {
+      top: 20px;
+      right: 20px;
+    }
+    .debug-panel.splat-debug {
+      top: 20px;
+      left: 20px;
+      min-width: 250px;
+    }
+    .splat-group {
+      margin-bottom: 20px;
+      padding: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+    }
+    .splat-group h4 {
+      margin: 0 0 8px 0;
+      font-size: 13px;
+      color: #ff6b6b;
+    }
+    .control-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .control-row .control-group {
+      flex: 1;
+      margin-bottom: 0;
+    }
+    .control-row label {
+      font-size: 10px;
+    }
+    .control-row input {
+      font-size: 10px;
+      padding: 2px 4px;
+    }
+    .debug-toggle {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 6px;
+      padding: 8px 16px;
+      color: #fff;
+      font-family: monospace;
+      font-size: 12px;
+      cursor: pointer;
+      z-index: 1001;
+      transition: all 0.2s ease;
+    }
+    .debug-toggle:hover {
+      background: rgba(0, 0, 0, 0.9);
+      border-color: #00ff88;
+    }
+    .debug-panels.hidden {
+      display: none;
     }
     .debug-panel h3 {
       margin: 0 0 12px 0;
@@ -125,20 +184,26 @@
 
   <div class="hint">Scroll to see each section's splat appear → hold FORM (0.40–0.60) → disperse</div>
 
-  <div class="debug-panel">
+  <!-- Debug Toggle Button -->
+  <button class="debug-toggle" id="debug-toggle">Hide Debug UI</button>
+
+  <!-- Debug Panels Container -->
+  <div class="debug-panels" id="debug-panels">
+  <!-- Camera Debug Panel -->
+  <div class="debug-panel camera-debug">
     <h3>Camera Debug</h3>
     
     <div class="control-group">
       <label>Position X:</label>
-      <input type="number" id="cam-pos-x" value="0" step="0.1">
+      <input type="number" id="cam-pos-x" value="3" step="0.1">
     </div>
     <div class="control-group">
       <label>Position Y:</label>
-      <input type="number" id="cam-pos-y" value="0" step="0.1">
+      <input type="number" id="cam-pos-y" value="-2.5" step="0.1">
     </div>
     <div class="control-group">
       <label>Position Z:</label>
-      <input type="number" id="cam-pos-z" value="15" step="0.1">
+      <input type="number" id="cam-pos-z" value="6" step="0.1">
     </div>
     
     <div class="control-group">
@@ -159,6 +224,140 @@
       <input type="number" id="cam-fov" value="75" step="1" min="10" max="120">
     </div>
   </div>
+
+  <!-- Splat Debug Panel -->
+  <div class="debug-panel splat-debug">
+    <h3>Splat Transforms</h3>
+    
+    <div class="splat-group">
+      <h4>Splat 1</h4>
+      <div class="control-row">
+        <div class="control-group">
+          <label>Pos X:</label>
+          <input type="number" id="splat-0-pos-x" value="0" step="0.1">
+        </div>
+        <div class="control-group">
+          <label>Pos Y:</label>
+          <input type="number" id="splat-0-pos-y" value="0" step="0.1">
+        </div>
+        <div class="control-group">
+          <label>Pos Z:</label>
+          <input type="number" id="splat-0-pos-z" value="0" step="0.1">
+        </div>
+      </div>
+      <div class="control-row">
+        <div class="control-group">
+          <label>Rot X:</label>
+          <input type="number" id="splat-0-rot-x" value="0" step="0.01">
+        </div>
+        <div class="control-group">
+          <label>Rot Y:</label>
+          <input type="number" id="splat-0-rot-y" value="0" step="0.01">
+        </div>
+        <div class="control-group">
+          <label>Rot Z:</label>
+          <input type="number" id="splat-0-rot-z" value="0" step="0.01">
+        </div>
+      </div>
+    </div>
+    
+    <div class="splat-group">
+      <h4>Splat 2</h4>
+      <div class="control-row">
+        <div class="control-group">
+          <label>Pos X:</label>
+          <input type="number" id="splat-1-pos-x" value="0" step="0.1">
+        </div>
+        <div class="control-group">
+          <label>Pos Y:</label>
+          <input type="number" id="splat-1-pos-y" value="0" step="0.1">
+        </div>
+        <div class="control-group">
+          <label>Pos Z:</label>
+          <input type="number" id="splat-1-pos-z" value="0" step="0.1">
+        </div>
+      </div>
+      <div class="control-row">
+        <div class="control-group">
+          <label>Rot X:</label>
+          <input type="number" id="splat-1-rot-x" value="0" step="0.01">
+        </div>
+        <div class="control-group">
+          <label>Rot Y:</label>
+          <input type="number" id="splat-1-rot-y" value="0" step="0.01">
+        </div>
+        <div class="control-group">
+          <label>Rot Z:</label>
+          <input type="number" id="splat-1-rot-z" value="0" step="0.01">
+        </div>
+      </div>
+    </div>
+    
+    <div class="splat-group">
+      <h4>Splat 3</h4>
+      <div class="control-row">
+        <div class="control-group">
+          <label>Pos X:</label>
+          <input type="number" id="splat-2-pos-x" value="0" step="0.1">
+        </div>
+        <div class="control-group">
+          <label>Pos Y:</label>
+          <input type="number" id="splat-2-pos-y" value="0" step="0.1">
+        </div>
+        <div class="control-group">
+          <label>Pos Z:</label>
+          <input type="number" id="splat-2-pos-z" value="0" step="0.1">
+        </div>
+      </div>
+      <div class="control-row">
+        <div class="control-group">
+          <label>Rot X:</label>
+          <input type="number" id="splat-2-rot-x" value="0" step="0.01">
+        </div>
+        <div class="control-group">
+          <label>Rot Y:</label>
+          <input type="number" id="splat-2-rot-y" value="0" step="0.01">
+        </div>
+        <div class="control-group">
+          <label>Rot Z:</label>
+          <input type="number" id="splat-2-rot-z" value="0" step="0.01">
+        </div>
+      </div>
+    </div>
+    
+    <div class="splat-group">
+      <h4>Splat 4</h4>
+      <div class="control-row">
+        <div class="control-group">
+          <label>Pos X:</label>
+          <input type="number" id="splat-3-pos-x" value="0" step="0.1">
+        </div>
+        <div class="control-group">
+          <label>Pos Y:</label>
+          <input type="number" id="splat-3-pos-y" value="0" step="0.1">
+        </div>
+        <div class="control-group">
+          <label>Pos Z:</label>
+          <input type="number" id="splat-3-pos-z" value="0" step="0.1">
+        </div>
+      </div>
+      <div class="control-row">
+        <div class="control-group">
+          <label>Rot X:</label>
+          <input type="number" id="splat-3-rot-x" value="0" step="0.01">
+        </div>
+        <div class="control-group">
+          <label>Rot Y:</label>
+          <input type="number" id="splat-3-rot-y" value="0" step="0.01">
+        </div>
+        <div class="control-group">
+          <label>Rot Z:</label>
+          <input type="number" id="splat-3-rot-z" value="0" step="0.01">
+        </div>
+      </div>
+    </div>
+  </div>
+  </div> <!-- End Debug Panels Container -->
 
   <script type="importmap">
     {

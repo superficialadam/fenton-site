@@ -37,9 +37,16 @@ const sources = [
 // ===== Debug switch to toggle dispersion effect =====
 const ENABLE_DISPERSION = true; // Set to false to disable dispersion for debugging
 
+// ===== Scroll-driven rotation parameters =====
+const ROTATION_CONFIG = {
+  enabled: true,
+  rotationsPerSection: -0.2, // Full rotations (360°) per section scroll
+  easing: true // Apply easing to rotation
+};
+
 // ===== Individual transformation parameters for each splat =====
 const splatTransforms = [
-  { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }, // Splat 1
+  { position: [0, 0, 0], rotation: [0.5, 0, 0], scale: [1, 1, 1] }, // Splat 1
   { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }, // Splat 2
   { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }, // Splat 3
   { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }  // Splat 4
@@ -374,6 +381,21 @@ function closestSectionIndex() {
   return best;
 }
 
+// ===== Calculate Y rotation based on scroll progress =====
+function calculateSplatRotation(t) {
+  if (!ROTATION_CONFIG.enabled) return 0;
+
+  const rawRotation = t * ROTATION_CONFIG.rotationsPerSection * Math.PI * 2; // Convert to radians
+
+  if (ROTATION_CONFIG.easing) {
+    // Apply easing to the rotation for smoother motion
+    const easedT = easeInOutCubic(t);
+    return easedT * ROTATION_CONFIG.rotationsPerSection * Math.PI * 2;
+  }
+
+  return rawRotation;
+}
+
 // ===== Resize handling =====
 function onResize() {
   renderer.setSize(window.innerWidth, window.innerHeight, false);
@@ -427,6 +449,16 @@ function loop() {
         // Apply default formed state uniforms
         const formedState = { ...PRESETS.FORM };
         applyUniforms(splat, formedState);
+
+        // Apply rotation based on a simulated scroll progress for debug mode
+        const debugT = (clock.getElapsedTime() * 0.1) % 1.0; // Slow continuous rotation for debug
+        const rotationY = calculateSplatRotation(debugT);
+        const baseTransform = splatTransforms[index];
+        splat.rotation.set(
+          baseTransform.rotation[0],
+          baseTransform.rotation[1] + rotationY,
+          baseTransform.rotation[2]
+        );
       });
       renderer.render(scene, camera);
       requestAnimationFrame(frame);
@@ -454,7 +486,18 @@ function loop() {
     const t = sectionProgress(sections[idx]);
     const target = sampleState(t);
     const active = splats[activeIndex];
-    if (active) applyUniforms(active, target);
+    if (active) {
+      applyUniforms(active, target);
+
+      // Apply scroll-driven rotation
+      const rotationY = calculateSplatRotation(t);
+      const baseTransform = splatTransforms[activeIndex];
+      active.rotation.set(
+        baseTransform.rotation[0],
+        baseTransform.rotation[1] + rotationY,
+        baseTransform.rotation[2]
+      );
+    }
 
     renderer.render(scene, camera);
     requestAnimationFrame(frame);
@@ -508,8 +551,99 @@ function setupCameraDebugControls() {
   return { inputs, updateCamera };
 }
 
-// Initialize camera debug controls after DOM is ready
+// ===== Splat debug controls =====
+function setupSplatDebugControls() {
+  const splatInputs = [];
+
+  // Create input references for each splat
+  for (let i = 0; i < sources.length; i++) {
+    splatInputs[i] = {
+      posX: document.getElementById(`splat-${i}-pos-x`),
+      posY: document.getElementById(`splat-${i}-pos-y`),
+      posZ: document.getElementById(`splat-${i}-pos-z`),
+      rotX: document.getElementById(`splat-${i}-rot-x`),
+      rotY: document.getElementById(`splat-${i}-rot-y`),
+      rotZ: document.getElementById(`splat-${i}-rot-z`)
+    };
+  }
+
+  function updateSplatTransform(index) {
+    const inputs = splatInputs[index];
+    if (!inputs) return;
+
+    // Update the splatTransforms array
+    splatTransforms[index] = {
+      position: [
+        parseFloat(inputs.posX.value) || 0,
+        parseFloat(inputs.posY.value) || 0,
+        parseFloat(inputs.posZ.value) || 0
+      ],
+      rotation: [
+        parseFloat(inputs.rotX.value) || 0,
+        parseFloat(inputs.rotY.value) || 0,
+        parseFloat(inputs.rotZ.value) || 0
+      ],
+      scale: [1, 1, 1] // Keep scale unchanged
+    };
+
+    // Apply transform to the splat if it's loaded
+    const splat = splats[index];
+    if (splat && splat.position) {
+      const transform = splatTransforms[index];
+      splat.position.set(transform.position[0], transform.position[1], transform.position[2]);
+      // Don't set rotation here as it will be overridden by scroll-driven rotation
+      // The base rotation will be used in the main loop
+      splat.scale.set(transform.scale[0], transform.scale[1], transform.scale[2]);
+    }
+  }
+
+  function updateAllSplats() {
+    for (let i = 0; i < sources.length; i++) {
+      updateSplatTransform(i);
+    }
+  }
+
+  // Add event listeners to all splat inputs
+  splatInputs.forEach((inputs, index) => {
+    Object.values(inputs).forEach(input => {
+      if (input) {
+        input.addEventListener('input', () => updateSplatTransform(index));
+        input.addEventListener('change', () => updateSplatTransform(index));
+      }
+    });
+  });
+
+  return { splatInputs, updateSplatTransform, updateAllSplats };
+}
+
+// ===== Debug UI toggle functionality =====
+function setupDebugToggle() {
+  const toggleButton = document.getElementById('debug-toggle');
+  const debugPanels = document.getElementById('debug-panels');
+  let isVisible = true;
+
+  function toggleDebugUI() {
+    isVisible = !isVisible;
+    if (isVisible) {
+      debugPanels.classList.remove('hidden');
+      toggleButton.textContent = 'Hide Debug UI';
+    } else {
+      debugPanels.classList.add('hidden');
+      toggleButton.textContent = 'Show Debug UI';
+    }
+  }
+
+  if (toggleButton) {
+    toggleButton.addEventListener('click', toggleDebugUI);
+  }
+
+  return { toggleDebugUI, isVisible: () => isVisible };
+}
+
+// Initialize debug controls after DOM is ready
 const cameraDebug = setupCameraDebugControls();
+const splatDebug = setupSplatDebugControls();
+const debugToggle = setupDebugToggle();
 
 // ===== Debug helpers (optional) =====
 window.splats = {
@@ -520,6 +654,9 @@ window.splats = {
   presets: PRESETS,
   camera,
   cameraDebug,
+  splatDebug,
+  debugToggle,
+  splatTransforms,
   dispose() {
     renderer.dispose();
     splats.forEach(s => s.dispose && s.dispose());
