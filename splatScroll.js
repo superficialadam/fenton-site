@@ -29,8 +29,8 @@ const hero = document.getElementById('hero');
 // ===== Splat sources in order =====
 const sources = [
   'https://lumalabs.ai/capture/369f2055-ca06-498e-9c55-40110d332909',
+  'https://lumalabs.ai/capture/4da7cf32-865a-4515-8cb9-9dfc574c90c2',
   'https://lumalabs.ai/capture/0180b1f3-d3ef-4020-820a-22a36d94cb52',
-  'https://lumalabs.ai/capture/4f362242-ad43-4851-9b04-88adf71f24f5',
   'https://lumalabs.ai/capture/369f2055-ca06-498e-9c55-40110d332909'
 ];
 
@@ -46,9 +46,9 @@ const ROTATION_CONFIG = {
 
 // ===== Individual transformation parameters for each splat =====
 const splatTransforms = [
-  { position: [0, 0, 0], rotation: [0.5, 0, 0], scale: [1, 1, 1] }, // Splat 1
-  { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }, // Splat 2
-  { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }, // Splat 3
+  { position: [1.3, -1.5, 3], rotation: [0.4, 0.5, -0.2], scale: [1, 1, 1] }, // Splat 1
+  { position: [-.5, -1, 1], rotation: [0, 0.6, -0.1], scale: [1, 1, 1] }, // Splat 2
+  { position: [1.6, -2.2, 3.5], rotation: [0.2, 0, -0.1], scale: [1, 1, 1] }, // Splat 3
   { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }  // Splat 4
 ];
 
