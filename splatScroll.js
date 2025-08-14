@@ -1,4 +1,4 @@
-// Scroll-driven multi-splat system (standalone)
+// Scroll-driven mu
 // - Renders only one splat at a time
 // - FORM plateau 0.40 → 0.60, then reverse
 // - Uniforms include all parameters, with u_noiseScale fixed at 0.88
@@ -15,9 +15,9 @@ renderer.setClearColor(0x000000, 1);
 
 const scene = new Scene();
 const camera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.x = 2;
-camera.position.y = -2;
-camera.position.z = 15;
+camera.position.x = 3;
+camera.position.y = -2.5;
+camera.position.z = 6;
 
 const clock = new Clock();
 
@@ -28,18 +28,18 @@ const hero = document.getElementById('hero');
 
 // ===== Splat sources in order =====
 const sources = [
-  'https://lumalabs.ai/capture/a7eb44c9-cba1-4fed-b0e2-26f6399549ba',
+  'https://lumalabs.ai/capture/369f2055-ca06-498e-9c55-40110d332909',
   'https://lumalabs.ai/capture/0180b1f3-d3ef-4020-820a-22a36d94cb52',
   'https://lumalabs.ai/capture/4f362242-ad43-4851-9b04-88adf71f24f5',
   'https://lumalabs.ai/capture/369f2055-ca06-498e-9c55-40110d332909'
 ];
 
 // ===== Debug switch to toggle dispersion effect =====
-const ENABLE_DISPERSION = false; // Set to false to disable dispersion for debugging
+const ENABLE_DISPERSION = true; // Set to false to disable dispersion for debugging
 
 // ===== Individual transformation parameters for each splat =====
 const splatTransforms = [
-  { position: [0, 0, 0], rotation: [0.2, 0, 0.2], scale: [1, 1, 1] }, // Splat 1
+  { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }, // Splat 1
   { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }, // Splat 2
   { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }, // Splat 3
   { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }  // Splat 4
@@ -52,8 +52,8 @@ const BASE = {
   u_turbulenceScale: 0.03,
   u_noiseScale: 0.88,             // fixed across all states
   u_dispersionVolume: 12.4,
-  u_splatSize: 0.1,
-  u_splatOpacity: 1.6,
+  u_splatSize: 1.0,
+  u_splatOpacity: 1.0,
   u_colorFade: 0.10,
   u_blackSplatsPercent: 1.0,
   u_saturation: 0.0,
@@ -462,6 +462,55 @@ function loop() {
   requestAnimationFrame(frame);
 }
 
+// ===== Camera debug controls =====
+function setupCameraDebugControls() {
+  const inputs = {
+    posX: document.getElementById('cam-pos-x'),
+    posY: document.getElementById('cam-pos-y'),
+    posZ: document.getElementById('cam-pos-z'),
+    rotX: document.getElementById('cam-rot-x'),
+    rotY: document.getElementById('cam-rot-y'),
+    rotZ: document.getElementById('cam-rot-z'),
+    fov: document.getElementById('cam-fov')
+  };
+
+  // Initialize input values from current camera state
+  inputs.posX.value = camera.position.x;
+  inputs.posY.value = camera.position.y;
+  inputs.posZ.value = camera.position.z;
+  inputs.rotX.value = camera.rotation.x;
+  inputs.rotY.value = camera.rotation.y;
+  inputs.rotZ.value = camera.rotation.z;
+  inputs.fov.value = camera.fov;
+
+  function updateCamera() {
+    // Update position
+    camera.position.x = parseFloat(inputs.posX.value) || 0;
+    camera.position.y = parseFloat(inputs.posY.value) || 0;
+    camera.position.z = parseFloat(inputs.posZ.value) || 15;
+
+    // Update rotation
+    camera.rotation.x = parseFloat(inputs.rotX.value) || 0;
+    camera.rotation.y = parseFloat(inputs.rotY.value) || 0;
+    camera.rotation.z = parseFloat(inputs.rotZ.value) || 0;
+
+    // Update FOV
+    camera.fov = parseFloat(inputs.fov.value) || 75;
+    camera.updateProjectionMatrix();
+  }
+
+  // Add event listeners to all inputs
+  Object.values(inputs).forEach(input => {
+    input.addEventListener('input', updateCamera);
+    input.addEventListener('change', updateCamera);
+  });
+
+  return { inputs, updateCamera };
+}
+
+// Initialize camera debug controls after DOM is ready
+const cameraDebug = setupCameraDebugControls();
+
 // ===== Debug helpers (optional) =====
 window.splats = {
   setActive,
@@ -469,6 +518,8 @@ window.splats = {
   sectionProgress: (i) => sectionProgress(sections[i]),
   breakpoints,
   presets: PRESETS,
+  camera,
+  cameraDebug,
   dispose() {
     renderer.dispose();
     splats.forEach(s => s.dispose && s.dispose());

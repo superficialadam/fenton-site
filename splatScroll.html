@@ -58,6 +58,47 @@
       text-align: center;
       pointer-events: none;
     }
+    .debug-panel {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: rgba(0, 0, 0, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      padding: 16px;
+      font-family: monospace;
+      font-size: 12px;
+      color: #fff;
+      z-index: 1000;
+      min-width: 200px;
+    }
+    .debug-panel h3 {
+      margin: 0 0 12px 0;
+      font-size: 14px;
+      color: #00ff88;
+    }
+    .debug-panel .control-group {
+      margin-bottom: 12px;
+    }
+    .debug-panel label {
+      display: block;
+      margin-bottom: 4px;
+      color: #ccc;
+    }
+    .debug-panel input {
+      width: 100%;
+      padding: 4px 6px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 3px;
+      color: #fff;
+      font-family: monospace;
+      font-size: 11px;
+    }
+    .debug-panel input:focus {
+      outline: none;
+      border-color: #00ff88;
+    }
   </style>
 </head>
 <body>
@@ -82,7 +123,42 @@
     </section>
   </div>
 
-  <div class="hint">Scroll to see each section’s splat appear → hold FORM (0.40–0.60) → disperse</div>
+  <div class="hint">Scroll to see each section's splat appear → hold FORM (0.40–0.60) → disperse</div>
+
+  <div class="debug-panel">
+    <h3>Camera Debug</h3>
+    
+    <div class="control-group">
+      <label>Position X:</label>
+      <input type="number" id="cam-pos-x" value="0" step="0.1">
+    </div>
+    <div class="control-group">
+      <label>Position Y:</label>
+      <input type="number" id="cam-pos-y" value="0" step="0.1">
+    </div>
+    <div class="control-group">
+      <label>Position Z:</label>
+      <input type="number" id="cam-pos-z" value="15" step="0.1">
+    </div>
+    
+    <div class="control-group">
+      <label>Rotation X (rad):</label>
+      <input type="number" id="cam-rot-x" value="0" step="0.01">
+    </div>
+    <div class="control-group">
+      <label>Rotation Y (rad):</label>
+      <input type="number" id="cam-rot-y" value="0" step="0.01">
+    </div>
+    <div class="control-group">
+      <label>Rotation Z (rad):</label>
+      <input type="number" id="cam-rot-z" value="0" step="0.01">
+    </div>
+    
+    <div class="control-group">
+      <label>FOV (degrees):</label>
+      <input type="number" id="cam-fov" value="75" step="1" min="10" max="120">
+    </div>
+  </div>
 
   <script type="importmap">
     {
