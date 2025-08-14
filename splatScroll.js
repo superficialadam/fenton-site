@@ -55,10 +55,10 @@ const splatTransforms = [
 // ===== Animation params (full uniform list) =====
 const BASE = {
   u_progress: 0.0,
-  u_turbulenceStrength: 7.2,
+  u_turbulenceStrength: 17.2,
   u_turbulenceScale: 0.03,
-  u_noiseScale: 0.88,             // fixed across all states
-  u_dispersionVolume: 12.4,
+  u_noiseScale: 2.88,             // fixed across all states
+  u_dispersionVolume: 23.4,
   u_splatSize: 1.0,
   u_splatOpacity: 1.0,
   u_colorFade: 0.10,
@@ -73,7 +73,7 @@ const BASE = {
 const PRESETS = {
   IDLE: { ...BASE, u_progress: 0.00, u_blackSplatsPercent: 1.00, u_saturation: 0.00, u_influence: 1.00, u_colorFade: 0.10 },
   APPEARING: { ...BASE, u_progress: 0.30, u_blackSplatsPercent: 0.99, u_saturation: 0.00, u_influence: 1.00, u_colorFade: 0.10 },
-  CLOUD: { ...BASE, u_progress: 0.55, u_blackSplatsPercent: 0.66, u_saturation: 0.00, u_influence: 1.00, u_colorFade: 0.10 },
+  CLOUD: { ...BASE, u_progress: 0.85, u_blackSplatsPercent: 0.96, u_saturation: 0.00, u_influence: 1.00, u_colorFade: 0.10 },
   FORM: { ...BASE, u_progress: 1.00, u_blackSplatsPercent: 0.00, u_saturation: 1.00, u_influence: 0.00, u_colorFade: 0.00 }
 };
 
@@ -91,7 +91,7 @@ function blendPresets(a, b, t) {
 // ===== Scroll mapping with FORM plateau 0.40–0.60 =====
 const breakpoints = {
   idleEnd: 0.25,
-  appearingEnd: 0.40,
+  appearingEnd: 0.30,
   formReach: 0.50,
   formHoldEnd: 0.65
 };
