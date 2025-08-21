@@ -28,7 +28,7 @@ const hero = document.getElementById('hero');
 
 // ===== Splat sources in order =====
 const sources = [
-  'https://lumalabs.ai/capture/369f2055-ca06-498e-9c55-40110d332909',
+  'https://lumalabs.ai/capture/01d9367f-058e-4d96-b778-0c872381ab36',
   'https://lumalabs.ai/capture/4da7cf32-865a-4515-8cb9-9dfc574c90c2',
   'https://lumalabs.ai/capture/0180b1f3-d3ef-4020-820a-22a36d94cb52',
   'https://lumalabs.ai/capture/a7eb44c9-cba1-4fed-b0e2-26f6399549ba'
@@ -46,7 +46,7 @@ const ROTATION_CONFIG = {
 
 // ===== Individual transformation parameters for each splat =====
 const splatTransforms = [
-  { position: [1.3, -1.5, 3], rotation: [0.4, 0.5, -0.2], scale: [1, 1, 1] }, // Splat 1
+  { position: [0, -1.5, 0], rotation: [0.4, 0.5, -0.2], scale: [1, 1, 1] }, // Splat 1
   { position: [-.5, -1, 1], rotation: [0, 0.6, -0.1], scale: [1, 1, 1] }, // Splat 2
   { position: [1.6, -2.2, 3.5], rotation: [0.2, 0, -0.1], scale: [1, 1, 1] }, // Splat 3
   { position: [0.5, -1.5, 2], rotation: [0.2, -0.1, 0], scale: [1, 1, 1] }  // Splat 4
@@ -620,7 +620,7 @@ function setupSplatDebugControls() {
 function setupDebugToggle() {
   const toggleButton = document.getElementById('debug-toggle');
   const debugPanels = document.getElementById('debug-panels');
-  let isVisible = true;
+  let isVisible = false;
 
   function toggleDebugUI() {
     isVisible = !isVisible;
