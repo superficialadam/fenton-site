@@ -28,10 +28,10 @@ const hero = document.getElementById('hero');
 
 // ===== Splat sources in order =====
 const sources = [
-  'https://lumalabs.ai/capture/01d9367f-058e-4d96-b778-0c872381ab36',
   'https://lumalabs.ai/capture/4da7cf32-865a-4515-8cb9-9dfc574c90c2',
+  'https://lumalabs.ai/capture/01d9367f-058e-4d96-b778-0c872381ab36',
   'https://lumalabs.ai/capture/0180b1f3-d3ef-4020-820a-22a36d94cb52',
-  'https://lumalabs.ai/capture/a7eb44c9-cba1-4fed-b0e2-26f6399549ba'
+  'https://lumalabs.ai/capture/4f362242-ad43-4851-9b04-88adf71f24f5'
 ];
 
 // ===== Debug switch to toggle dispersion effect =====
@@ -46,10 +46,10 @@ const ROTATION_CONFIG = {
 
 // ===== Individual transformation parameters for each splat =====
 const splatTransforms = [
-  { position: [0, -1.5, 0], rotation: [0.4, 0.5, -0.2], scale: [1, 1, 1] }, // Splat 1
-  { position: [-.5, -1, 1], rotation: [0, 0.6, -0.1], scale: [1, 1, 1] }, // Splat 2
-  { position: [1.6, -2.2, 3.5], rotation: [0.2, 0, -0.1], scale: [1, 1, 1] }, // Splat 3
-  { position: [0.5, -1.5, 2], rotation: [0.2, -0.1, 0], scale: [1, 1, 1] }  // Splat 4
+  { position: [-.5, -1, 1], rotation: [0, 0.6, -0.1], scale: [1, 1, 1], brightness: 1.0, saturation: 1.0 }, // Splat 2
+  { position: [0, -1.5, 0], rotation: [0.1, 2.8, -0.2], scale: [1, 1, 1], brightness: 0.8, saturation: 0.8 }, // Splat 1
+  { position: [1.6, -2.2, 3.5], rotation: [0.2, 0, -0.1], scale: [1, 1, 1], brightness: 1.0, saturation: 1.0 }, // Splat 3
+  { position: [0.5, -1.9, 2], rotation: [0.0, 0.0, -0.0], scale: [1, 1, 1], brightness: 1.0, saturation: 1.0 }  // Splat 4
 ];
 
 // ===== Animation params (full uniform list) =====
@@ -142,6 +142,9 @@ function buildSplat(source, index) {
     splat.position.set(transform.position[0], transform.position[1], transform.position[2]);
     splat.rotation.set(transform.rotation[0], transform.rotation[1], transform.rotation[2]);
     splat.scale.set(transform.scale[0], transform.scale[1], transform.scale[2]);
+
+    // Store splat index for later reference
+    splat.splatIndex = index;
 
     // Keep the shader hooks for turbulence and dispersion effects
     splat.setShaderHooks({
@@ -257,17 +260,19 @@ function buildSplat(source, index) {
             vec3 originalColor = splatColor.rgb;
             vec3 processedColor = originalColor;
 
-            float effectiveBrightness = mix(1.0, u_brightness, clamp(dragFactor, 0.0, 1.0));
-            processedColor *= effectiveBrightness;
+            // Apply brightness as a direct multiplier (always active)
+            processedColor *= u_brightness;
 
+            // Apply saturation adjustment (always active)
             vec3 hsv = rgb2hsv(processedColor);
-            float effectiveSaturation = mix(1.0, u_saturation, clamp(dragFactor, 0.0, 1.0));
-            hsv.y *= effectiveSaturation;
+            hsv.y *= u_saturation;
             processedColor = hsv2rgb(hsv);
 
+            // Apply color fade based on drag factor (only during animation)
             float effectiveFade = u_colorFade * clamp(dragFactor, 0.0, 1.0);
             processedColor = mix(processedColor, vec3(0.0, 0.0, 0.0), effectiveFade);
 
+            // Apply black splats percentage (only during animation)
             float positionHash = fract(sin(dot(splatPosition.xy, vec2(12.9898, 78.233))) * 43758.5453);
             float isBlackSplat = step(positionHash, u_blackSplatsPercent);
 
@@ -296,7 +301,11 @@ function buildSplat(source, index) {
 }
 
 // ===== Create and preload all splats =====
-const splats = sources.map((src, index) => buildSplat(src, index));
+const splats = sources.map((src, index) => {
+  const splat = buildSplat(src, index);
+  splat.splatIndex = index; // Ensure index is set immediately
+  return splat;
+});
 
 // When dispersion is disabled, make all splats visible immediately for debugging
 if (!ENABLE_DISPERSION) {
@@ -324,6 +333,12 @@ function applyUniforms(splat, uniforms) {
   // always keep time updated
   if (u.u_time) u.u_time.value = clock.getElapsedTime();
 
+  // Get per-splat brightness and saturation values
+  const splatIndex = splat.splatIndex ?? 0;
+  const transform = splatTransforms[splatIndex];
+  const splatBrightness = transform.brightness ?? 1.0;
+  const splatSaturation = transform.saturation ?? 1.0;
+
   // set all known uniforms (noiseScale forced to 0.88)
   if (u.u_progress) u.u_progress.value = ENABLE_DISPERSION ? uniforms.u_progress : 1.0; // Show formed state when dispersion is disabled
   if (u.u_turbulenceStrength) u.u_turbulenceStrength.value = uniforms.u_turbulenceStrength;
@@ -334,8 +349,18 @@ function applyUniforms(splat, uniforms) {
   if (u.u_splatOpacity) u.u_splatOpacity.value = uniforms.u_splatOpacity;
   if (u.u_colorFade) u.u_colorFade.value = ENABLE_DISPERSION ? uniforms.u_colorFade : 0.0; // No color fade when dispersion is disabled
   if (u.u_blackSplatsPercent) u.u_blackSplatsPercent.value = ENABLE_DISPERSION ? uniforms.u_blackSplatsPercent : 0.0; // No black splats when dispersion is disabled
-  if (u.u_saturation) u.u_saturation.value = ENABLE_DISPERSION ? uniforms.u_saturation : 1.0; // Full saturation when dispersion is disabled
-  if (u.u_brightness) u.u_brightness.value = uniforms.u_brightness;
+
+  // Use per-splat brightness and saturation as multipliers on the animation values
+  if (u.u_saturation) {
+    // The animation provides base saturation (0 to 1), splat value is a multiplier
+    const animatedSaturation = ENABLE_DISPERSION ? uniforms.u_saturation : 1.0;
+    u.u_saturation.value = animatedSaturation * splatSaturation;
+  }
+  if (u.u_brightness) {
+    // The animation provides base brightness, splat value is a multiplier
+    u.u_brightness.value = uniforms.u_brightness * splatBrightness;
+  }
+
   if (u.u_influence) u.u_influence.value = uniforms.u_influence;
   if (u.u_dragMin) u.u_dragMin.value = uniforms.u_dragMin;
   if (u.u_dragMax) u.u_dragMax.value = uniforms.u_dragMax;
@@ -563,7 +588,9 @@ function setupSplatDebugControls() {
       posZ: document.getElementById(`splat-${i}-pos-z`),
       rotX: document.getElementById(`splat-${i}-rot-x`),
       rotY: document.getElementById(`splat-${i}-rot-y`),
-      rotZ: document.getElementById(`splat-${i}-rot-z`)
+      rotZ: document.getElementById(`splat-${i}-rot-z`),
+      brightness: document.getElementById(`splat-${i}-brightness`),
+      saturation: document.getElementById(`splat-${i}-saturation`)
     };
   }
 
@@ -583,7 +610,9 @@ function setupSplatDebugControls() {
         parseFloat(inputs.rotY.value) || 0,
         parseFloat(inputs.rotZ.value) || 0
       ],
-      scale: [1, 1, 1] // Keep scale unchanged
+      scale: [1, 1, 1], // Keep scale unchanged
+      brightness: parseFloat(inputs.brightness.value) || 1.0,
+      saturation: parseFloat(inputs.saturation.value) || 1.0
     };
 
     // Apply transform to the splat if it's loaded
