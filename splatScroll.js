@@ -21,10 +21,10 @@ camera.position.z = 6;
 
 const clock = new Clock();
 
-// ===== Sections (hero + four bindable sections) =====
+// ===== Sections (four bindable sections) =====
 const sectionIds = ['sec-1', 'sec-2', 'sec-3', 'sec-4'];
 const sections = sectionIds.map(id => document.getElementById(id));
-const hero = document.getElementById('hero');
+const logoVideo = document.getElementById('logo-video');
 
 // ===== Splat sources in order =====
 const sources = [
@@ -366,6 +366,13 @@ function applyUniforms(splat, uniforms) {
   if (u.u_dragMax) u.u_dragMax.value = uniforms.u_dragMax;
 }
 
+// ===== Animation state for sec-1 auto-animation =====
+let isAutoAnimating = false;
+let autoAnimationProgress = 0;
+let autoAnimationStartTime = 0;
+const AUTO_ANIMATION_DURATION = 4000; // 4 seconds for the automatic animation
+let videoHasPlayed = false;
+
 // ===== Scene management (only one visible) =====
 let activeIndex = -1;
 function setActive(index) {
@@ -452,14 +459,48 @@ let warmFrames = 0;
         loop();
         renderer.setAnimationLoop(null);
       } else {
-        // remove everything; start with none active (we might be on hero)
+        // remove everything; start with none active
         splats.forEach(s => { s.visible = false; scene.remove(s); });
+        setupVideoAnimation(); // Setup video controls
         loop();
         renderer.setAnimationLoop(null);
       }
     }
   });
 })();
+
+// ===== Video control and automatic animation trigger =====
+function setupVideoAnimation() {
+  if (!logoVideo) return;
+  
+  // Start playing when page loads
+  logoVideo.play().catch(err => {
+    console.warn('Video autoplay failed:', err);
+    // If autoplay fails, start animation immediately
+    startAutoAnimation();
+  });
+  
+  logoVideo.addEventListener('ended', () => {
+    // Start fade out
+    logoVideo.classList.add('fade-out');
+    
+    // Start the automatic splat animation
+    startAutoAnimation();
+    
+    // Hide video completely after fade
+    setTimeout(() => {
+      logoVideo.classList.add('hidden');
+    }, 1000);
+  });
+}
+
+function startAutoAnimation() {
+  if (videoHasPlayed) return;
+  videoHasPlayed = true;
+  isAutoAnimating = true;
+  autoAnimationStartTime = performance.now();
+  setActive(0); // Activate first splat
+}
 
 function loop() {
   function frame() {
@@ -490,38 +531,96 @@ function loop() {
       return;
     }
 
-    // If we're still in hero (center is above section 1), render nothing
-    const firstRect = sections[0].getBoundingClientRect();
-    const inHero = firstRect.top > window.innerHeight / 2;
-    if (inHero) {
+    // Handle automatic animation for sec-1
+    if (isAutoAnimating && activeIndex === 0) {
+      const currentTime = performance.now();
+      const elapsed = currentTime - autoAnimationStartTime;
+      
+      if (elapsed < AUTO_ANIMATION_DURATION) {
+        // Calculate progress from 0.0 to 0.5 over 4 seconds
+        autoAnimationProgress = (elapsed / AUTO_ANIMATION_DURATION) * 0.5;
+        
+        const target = sampleState(autoAnimationProgress);
+        const active = splats[0];
+        if (active) {
+          applyUniforms(active, target);
+          
+          // Apply rotation for the animation
+          const rotationY = calculateSplatRotation(autoAnimationProgress);
+          const baseTransform = splatTransforms[0];
+          active.rotation.set(
+            baseTransform.rotation[0],
+            baseTransform.rotation[1] + rotationY,
+            baseTransform.rotation[2]
+          );
+        }
+      } else {
+        // Animation complete, switch to scroll-based control
+        isAutoAnimating = false;
+        autoAnimationProgress = 0.5;
+      }
+      
+      renderer.render(scene, camera);
+      requestAnimationFrame(frame);
+      return;
+    }
+    
+    // Normal scroll-based behavior
+    const idx = closestSectionIndex();
+    
+    // For sec-1, check if we should take over from auto-animation
+    if (idx === 0 && videoHasPlayed) {
+      const scrollT = sectionProgress(sections[0]);
+      
+      // Only take control if scrolling beyond where auto-animation left off (0.5)
+      // or if scrolling back up
+      if (!isAutoAnimating) {
+        setActive(0);
+        
+        // Use scroll progress, but clamp minimum to where auto-animation ended
+        const t = scrollT < 0.5 && autoAnimationProgress > 0 ? 
+                  Math.max(scrollT, autoAnimationProgress) : scrollT;
+        
+        const target = sampleState(t);
+        const active = splats[0];
+        if (active) {
+          applyUniforms(active, target);
+          
+          const rotationY = calculateSplatRotation(t);
+          const baseTransform = splatTransforms[0];
+          active.rotation.set(
+            baseTransform.rotation[0],
+            baseTransform.rotation[1] + rotationY,
+            baseTransform.rotation[2]
+          );
+        }
+      }
+    } else if (idx >= 0) {
+      // Normal behavior for other sections
+      setActive(idx);
+      
+      const t = sectionProgress(sections[idx]);
+      const target = sampleState(t);
+      const active = splats[activeIndex];
+      if (active) {
+        applyUniforms(active, target);
+        
+        const rotationY = calculateSplatRotation(t);
+        const baseTransform = splatTransforms[activeIndex];
+        active.rotation.set(
+          baseTransform.rotation[0],
+          baseTransform.rotation[1] + rotationY,
+          baseTransform.rotation[2]
+        );
+      }
+    } else {
+      // No section active
       if (activeIndex !== -1) {
         const prev = splats[activeIndex];
         prev.visible = false;
         scene.remove(prev);
         activeIndex = -1;
       }
-      renderer.render(scene, camera);
-      requestAnimationFrame(frame);
-      return;
-    }
-
-    const idx = closestSectionIndex();
-    setActive(idx);
-
-    const t = sectionProgress(sections[idx]);
-    const target = sampleState(t);
-    const active = splats[activeIndex];
-    if (active) {
-      applyUniforms(active, target);
-
-      // Apply scroll-driven rotation
-      const rotationY = calculateSplatRotation(t);
-      const baseTransform = splatTransforms[activeIndex];
-      active.rotation.set(
-        baseTransform.rotation[0],
-        baseTransform.rotation[1] + rotationY,
-        baseTransform.rotation[2]
-      );
     }
 
     renderer.render(scene, camera);
