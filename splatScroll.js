@@ -500,6 +500,13 @@ function startAutoAnimation() {
   isAutoAnimating = true;
   autoAnimationStartTime = performance.now();
   setActive(0); // Activate first splat
+  
+  // Immediately apply the starting state (0.0) to ensure splat starts from dispersed state
+  const startState = sampleState(0.0);
+  const active = splats[0];
+  if (active) {
+    applyUniforms(active, startState);
+  }
 }
 
 function loop() {
@@ -531,6 +538,20 @@ function loop() {
       return;
     }
 
+    // While video is playing, don't show any splats
+    if (!videoHasPlayed) {
+      // Make sure no splats are visible while video plays
+      if (activeIndex !== -1) {
+        const prev = splats[activeIndex];
+        prev.visible = false;
+        scene.remove(prev);
+        activeIndex = -1;
+      }
+      renderer.render(scene, camera);
+      requestAnimationFrame(frame);
+      return;
+    }
+    
     // Handle automatic animation for sec-1
     if (isAutoAnimating && activeIndex === 0) {
       const currentTime = performance.now();
