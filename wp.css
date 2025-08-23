@@ -1,236 +1,170 @@
-/* Generic helper: any block with .fullvh fills the viewport */
+/* ========== GENERIC HELPERS ========== */
 .fullvh {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
 }
+.wp-site-blocks,
+body { overflow-x: clip; }
 
-/* --- HERO: break out of StartAce's constrained layout and fill edge-to-edge --- */
+/* ========== HERO (edge‑to‑edge) ========== */
 #hero-video {
   position: relative;
-
-  /* make the section span the full viewport width regardless of parent width */
   width: 100vw;
   max-width: 100vw;
   margin-left: calc(50% - 50vw);
   margin-right: calc(50% - 50vw);
-
-  /* kill theme/global padding and internal spacing */
   padding: 0 !important;
   --wp--style--block-gap: 0;
-
-  /* full height & clipping */
   min-height: 100vh;
   overflow: hidden;
-
-  /* remove the red/background set on the block */
   background: transparent !important;
 }
-
-/* remove max-width/padding applied by StartAce/Gutenberg wrappers on this block */
 #hero-video.is-layout-constrained,
 #hero-video.wp-block-group,
-#hero-video.has-global-padding {
-  max-width: none !important;
-  padding: 0 !important;
-}
-
-/* keep the page from scrolling sideways when using 100vw breakout */
-.wp-site-blocks, body { overflow-x: clip; }
-
-/* content inside hero sits above video */
+#hero-video.has-global-padding { max-width: none !important; padding: 0 !important; }
 #hero-video > * { position: relative; z-index: 2; }
-
-/* background video fills the section */
 #hero-video .hero-video-bg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  z-index: 1;
-  pointer-events: none;
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; z-index: 1; pointer-events: none;
 }
 
-/* ===== HEADER ===== */
-
-/* Default header (non-homepage) */
-body:not(.home) header {
-  position: relative;
-  z-index: 1000;
+/* ========== HEADER (sticky everywhere; fade only on home) ========== */
+header {
+  position: sticky; top: 0; z-index: 1000;
   background: #fff;
   box-shadow: 0 2px 8px rgba(30,29,25,.1);
-  opacity: 1;              /* always visible */
-  pointer-events: auto;
 }
-
-/* Homepage: sticky & hidden until revealed */
 body.home header {
-  position: sticky;
-  top: 0;
-  z-index: 1000;
-  background: #fff;
-  box-shadow: 0 2px 8px rgba(30,29,25,.1);
-  opacity: 0;              /* start hidden */
-  pointer-events: none;
-  transition: opacity 600ms ease;
+  opacity: 0; pointer-events: none; transition: opacity 600ms ease;
 }
-
 body.home.header-visible header {
-  opacity: 1;
-  pointer-events: auto;
+  opacity: 1; pointer-events: auto;
+}
+header * { background: transparent !important; box-shadow: none !important; }
+
+/* ========== GUTENBERG NAV: MOBILE OVERLAY FIX ========== */
+/* Keep burger button above everything */
+.wp-block-navigation__responsive-container-open { position: relative; z-index: 1101; }
+
+/* Overlay panel */
+.wp-block-navigation__responsive-container {
+  position: fixed; inset: 0;
+  z-index: 1100;
+  display: none;            /* hidden by default */
+  background: #fff;         /* full-screen menu background */
+  overflow: hidden;
 }
 
-/* Prevent child blocks/links from adding their own shadows/backgrounds */
-header * {
-  background: transparent !important;
-  box-shadow: none !important;
-}
+/* When menu is open (core adds this class) */
+.wp-block-navigation__responsive-container.is-menu-open { display: block; }
 
-/* ===== FORMS ===== */
-.my-label {
-  font-size: 14px;     /* smaller text */
-  font-weight: normal; /* not bold */
-  display: block;
-  margin-bottom: 4px;
-}
-
-.my-input {
-  padding: 10px 8px;       /* less padding */
-  font-size: 14px;
-  border: 1px solid #ccc;  /* subtle border */
-  border-radius: 4px;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-/* ===== BUTTONS (Jetpack/Gutenberg) ===== */
-/* 1) Strip the block wrapper’s built‑in styles */
-.wp-block-jetpack-button.my-button,
-.wp-block-button.my-button {
-  background: transparent !important;
-  border: 0 !important;
-  padding: 0 !important;
-  box-shadow: none !important;
-}
-
-/* 2) Style the actual button */
-.wp-block-jetpack-button.my-button > .wp-block-button__link.my-button,
-.wp-block-button.my-button > .wp-block-button__link.my-button {
-  all: unset;
-  display: inline-block;
-  width: 100%;              /* remove if you want auto width */
-  text-align: center;
-  background: #F5F5F5;      /* light grey fill */
-  color: #000;              /* black text */
-  border: 1px solid #555;   /* thin dark grey border */
-  font-size: 14px;
-  font-weight: 400;         /* not bold */
-  line-height: 1;
-  padding: 14px 16px;
-  border-radius: 6px;
-  cursor: pointer;
-  text-transform: none;     /* prevent WP uppercasing */
-  transition: background-color .2s ease;
-}
-
-/* Hover / focus */
-.wp-block-jetpack-button.my-button > .wp-block-button__link.my-button:hover,
-.wp-block-button.my-button > .wp-block-button__link.my-button:hover {
-  background: #FFC6C1; /* Salmon 40% */
-}
-.wp-block-jetpack-button.my-button > .wp-block-button__link.my-button:focus {
-  outline: 2px solid #555;
-  outline-offset: 2px;
-}
-
-/* Optional: tidy spinner spacing */
-.wp-block-jetpack-button .spinner { margin-left: .5rem; }
-
-/* Style the link inside your custom button */
-.my-button .wp-block-button__link {
-  background-color: #f0f0f0;   /* light grey fill */
-  color: #000;                 /* black text */
-  border: 1px solid #555;      /* thin dark grey border */
-  font-weight: normal;         /* not bold */
-  font-size: 14px;
-  line-height: 1;
-  padding: 18px 24px;
-  border-radius: 2px;
-  text-decoration: none;
-  display: inline-block;
-  transition: background-color 0.2s ease;
-}
-
-.my-button .wp-block-button__link:hover {
-  background-color: #FFC6C1;   /* hover = Salmon 40% */
-}
-
-/* ===== FOOTER ===== */
-.my-footer {
-  box-shadow: 0 -1px 6px rgba(30, 29, 25, 0.08); /* up shadow using Soot tone */
+/* Dialog wrapper and scrollable inner area */
+.wp-block-navigation__responsive-dialog {
   position: relative;
-  z-index: 10;
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column;
+  padding: 16px;
+}
+.wp-block-navigation__responsive-container-content {
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 12px 8px 24px;
 }
 
-/* Grid */
+/* Close button stays on top */
+.wp-block-navigation__responsive-container-close { position: absolute; top: 10px; right: 10px; z-index: 1102; }
+
+/* Prevent accidental transparent text/colors inside overlay */
+.wp-block-navigation__responsive-container a,
+.wp-block-navigation__responsive-container button,
+.wp-block-navigation__responsive-container { color: #000; }
+
+/* ========== MOBILE SPACING (global padding helpers) ========== */
+@media (max-width: 782px) {
+  .has-global-padding,
+  .wp-block-group.has-global-padding,
+  .alignwide { padding-left: 16px !important; padding-right: 16px !important; }
+  .wp-block-spacer[style*="height:"] { max-height: 48px; } /* rein in giant gaps */
+}
+
+/* ========== FORMS ========== */
+.my-label { font-size: 14px; font-weight: 400; display: block; margin-bottom: 4px; }
+.my-input {
+  padding: 10px 8px; font-size: 14px; border: 1px solid #ccc;
+  border-radius: 4px; width: 100%; box-sizing: border-box;
+}
+
+/* Jetpack Contact button style (our neutral + salmon hover) */
+.wp-block-jetpack-button.my-button > .wp-block-button__link.my-button,
+.wp-block-button.my-button > .wp-block-button__link.my-button,
+.wp-block-jetpack-button.my-button > button.wp-block-button__link.my-button,
+.wp-block-button.my-button > button.wp-block-button__link.my-button {
+  background: #f5f5f5 !important; color: #000 !important; font-weight: 400;
+  border: 1px solid #555 !important; border-radius: 6px;
+  padding: 14px 16px; line-height: 1; text-transform: none;
+}
+.wp-block-jetpack-button.my-button > .wp-block-button__link.my-button:hover,
+.wp-block-button.my-button > .wp-block-button__link.my-button:hover,
+.wp-block-jetpack-button.my-button > button.wp-block-button__link.my-button:hover,
+.wp-block-button.my-button > button.wp-block-button__link.my-button:hover {
+  background: #FFC6C1 !important;
+}
+
+/* Inverted button (content blocks) — hover to salmon */
+.my-button-inv .wp-block-button__link:hover { background: #FFC6C1 !important; }
+
+/* Mailchimp field + consent (scoped to .mc-signup wrapper) */
+.mc-signup input[type="email"]{
+  --mc-width: 480px;
+  width: var(--mc-width); max-width: 100%;
+  display: block; padding: 14px 16px; line-height: 1.3;
+  background: #fff; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;
+  font: inherit;
+}
+.mc-signup input[type="email"]:focus {
+  outline: none; border-color: #1E1D19; box-shadow: 0 0 0 3px rgba(30,29,25,.12);
+}
+.mc-signup #wp-block-jetpack-mailchimp_consent-text {
+  font-size: 14px; line-height: 1.5; color: #4B4A47; margin-top: 8px;
+}
+
+/* ========== SERVICE GRID & CARDS ========== */
 .service-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 24px;
 }
+@media (max-width: 1024px){ .service-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px){ .service-grid { grid-template-columns: 1fr; } }
 
-/* Card */
 .service-card {
   background: #fff;
   border: 1px solid rgba(0,0,0,.06);
-  border-radius: 2px;                 /* minimal rounding */
-  box-shadow: 0 4px 14px rgba(0,0,0,.06); /* subtle shadow */
+  border-radius: 2px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.06);
   padding: 16px;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
+  display: flex; flex-direction: column; height: 100%;
   transition: box-shadow .2s ease, transform .15s ease;
 }
-.service-card:hover {
-  box-shadow: 0 6px 18px rgba(0,0,0,.08);
-  transform: translateY(-1px);
-}
+.service-card:hover { box-shadow: 0 6px 18px rgba(0,0,0,.08); transform: translateY(-1px); }
 
-/* Media */
-.service-media {
-  margin-bottom: 12px;
-}
+.service-media { margin-bottom: 12px; }
 .service-media img {
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  object-fit: contain;                /* preserve logos/icons */
-  background: #f7f7f7;               /* soft canvas behind art */
-  border-radius: 6px;
-  padding: 12px;
-  display: block;
+  display: block; width: 100%;
+  aspect-ratio: 1 / 1; object-fit: contain;
+  background: #f7f7f7; border-radius: 6px; padding: 12px;
+}
+@media (min-width: 1025px){
+  .service-media img { max-width: 220px; margin-inline: auto; }
 }
 
-/* Title */
-.service-title {
-  margin: 4px 0 6px;
-  font-size: 18px;
-  line-height: 1.2;
-}
-.service-title a {
-  text-decoration: none;
-  color: #111;
-}
+.service-title { margin: 4px 0 6px; font-size: 18px; line-height: 1.2; }
+.service-title a { color: #111; text-decoration: none; }
 .service-title a:hover { text-decoration: underline; }
-
-/* Excerpt */
-.service-excerpt {
-  font-size: 14px;
-  line-height: 1.5;
-  color: #333;
-  margin: 0;
-}
-
-/* Optional: keep bottoms aligned if you add buttons later */
+.service-excerpt { font-size: 14px; line-height: 1.5; color: #333; margin: 0; }
 .service-spacer { margin-top: auto; }
+
+/* ========== FOOTER SHADOW ========== */
+.my-footer { box-shadow: 0 -1px 6px rgba(30,29,25,0.08); position: relative; z-index: 10; }
