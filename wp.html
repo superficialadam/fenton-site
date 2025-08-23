@@ -1,0 +1,134 @@
+<script>
+(function () {
+  // ---- RUN ONLY ON HOMEPAGE + WHEN #sec-1 EXISTS ----
+  const isHome = document.body.classList.contains('home');
+  const sec1   = document.getElementById('sec-1');
+  if (!isHome || !sec1) {
+    console.log('Scroll video script: skipped (isHome=%s, hasSec1=%s)', isHome, !!sec1);
+    return;
+  }
+  console.log('Scroll video script: running (home + #sec-1 present)');
+
+  // ===== CONFIG =====
+  const VIDEO_SRC     = 'https://videos.files.wordpress.com/TSYUI1as/mainscrollv1.mp4';
+  const POSTER_SRC    = '';
+  const FPS           = 30;
+  const TOTAL_FRAMES  = 839;
+  const INTRO_FRAMES  = 205;   // 0..205 auto-play, then pause
+  const FADE_AT_FRAME = 120;   // fade header + sec-1 here
+  const SCROLL_VH     = 300;   // scrub distance (0..300vh)
+  const LS_KEY        = 'ff_video_intro_done';
+  const SEC1_ID       = 'sec-1';
+  // ===================
+
+  const INTRO_END_TIME = INTRO_FRAMES / FPS;
+  const FADE_TIME      = FADE_AT_FRAME / FPS;
+  const END_TIME       = TOTAL_FRAMES / FPS;
+
+  // Fixed full-viewport video container
+  let container = document.getElementById('scroll-vid');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'scroll-vid';
+    container.style.cssText =
+      'position:fixed;inset:0;z-index:-1;pointer-events:none;height:100vh;width:100vw;';
+    document.body.prepend(container);
+  }
+
+  const vid = document.createElement('video');
+  vid.id          = 'scroll-vid-bg';
+  vid.src         = VIDEO_SRC;
+  vid.muted       = true;
+  vid.playsInline = true;
+  vid.controls    = false;
+  vid.loop        = false;
+  vid.preload     = 'auto';
+  if (POSTER_SRC) vid.setAttribute('poster', POSTER_SRC);
+  vid.style.cssText = 'height:100%;width:100%;object-fit:cover;';
+  container.appendChild(vid);
+
+  // Reveal helpers (idempotent)
+  let revealed = false;
+  function revealAt120() {
+    if (revealed) return;
+    const s1 = document.getElementById(SEC1_ID);
+    if (s1) s1.classList.add('sec1-revealed');      // fades #sec-1
+    document.body.classList.add('header-visible');   // fades header
+    revealed = true;
+    console.log('Revealed header + #sec-1 (>= frame 120)');
+  }
+
+  // Scroll mapping: start exactly where #sec-1 sits at page-load
+  let scrubbing = false, ticking = false;
+  let scrollStart = 0, scrollSpan = 0;
+
+  function computeScrollMapping() {
+    const s1 = document.getElementById(SEC1_ID);
+    const sec1TopAtLoad = s1 ? (s1.getBoundingClientRect().top + window.scrollY) : window.scrollY;
+    scrollStart = sec1TopAtLoad;                         // scrub starts here
+    scrollSpan  = window.innerHeight * (SCROLL_VH / 100);
+    console.log('Scroll mapping:', { scrollStart, scrollSpan });
+  }
+
+  function setVideoTimeByScroll() {
+    if (!scrubbing || ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      const y = window.scrollY;
+      const clampedY = Math.min(Math.max(y, scrollStart), scrollStart + scrollSpan);
+      const p = (clampedY - scrollStart) / scrollSpan;                 // 0..1
+      const t = INTRO_END_TIME + p * (END_TIME - INTRO_END_TIME);      // 205..839
+      vid.currentTime = Math.max(t, INTRO_END_TIME);                   // never below 205
+      ticking = false;
+    });
+  }
+
+  function playIntroThenPause() {
+    const introDone = localStorage.getItem(LS_KEY) === '1';
+
+    // Fresh visit: play 0..205 once (keep the skip commented while testing)
+    vid.currentTime = 0;
+    vid.play().catch(()=>{});
+
+    const onTime = () => {
+      if (!revealed && vid.currentTime >= FADE_TIME) revealAt120();
+      if (vid.currentTime >= INTRO_END_TIME) {
+        vid.pause();
+        vid.currentTime = INTRO_END_TIME;
+        vid.removeEventListener('timeupdate', onTime);
+        localStorage.setItem(LS_KEY, '1'); // remember intro completed
+        scrubbing = true;
+        setVideoTimeByScroll();
+        console.log('Intro finished (frame 205). Scrubbing enabled.');
+      }
+    };
+    vid.addEventListener('timeupdate', onTime);
+  }
+
+  vid.addEventListener('loadedmetadata', function () {
+    computeScrollMapping();                         
+    window.addEventListener('resize', computeScrollMapping);
+    window.addEventListener('orientationchange', computeScrollMapping);
+    window.addEventListener('scroll', setVideoTimeByScroll, { passive: true });
+    playIntroThenPause();
+  });
+
+  // Safety: if autoplay is blocked, start on first interaction
+  function kickstart() {
+    if (vid.paused && !scrubbing) vid.play().catch(()=>{});
+    window.removeEventListener('pointerdown', kickstart);
+    console.log('Kickstarted video after user interaction.');
+  }
+  window.addEventListener('pointerdown', kickstart);
+})();
+</script>
+
+<style>
+/* Fade-in hooks */
+#sec-1 { opacity: 0; transition: opacity .6s ease; }
+#sec-1.sec1-revealed { opacity: 1; }
+
+/* Header fade (body class toggled at frame 120) */
+header { opacity: 0; transition: opacity .6s ease; }
+body.header-visible header { opacity: 1; }
+</style>
