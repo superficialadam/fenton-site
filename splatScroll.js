@@ -370,7 +370,7 @@ function applyUniforms(splat, uniforms) {
 let isAutoAnimating = false;
 let autoAnimationProgress = 0;
 let autoAnimationStartTime = 0;
-const AUTO_ANIMATION_DURATION = 4000; // 4 seconds for the automatic animation
+const AUTO_ANIMATION_DURATION = 4500; // 4.5 seconds for the automatic animation
 let videoHasPlayed = false;
 
 // ===== Scene management (only one visible) =====
@@ -501,16 +501,56 @@ function startAutoAnimation() {
   autoAnimationStartTime = performance.now();
   setActive(0); // Activate first splat
   
-  // Immediately apply the starting state (0.0) to ensure splat starts from dispersed state
-  const startState = sampleState(0.0);
+  // Start from 0.26
+  const startState = sampleState(0.26);
   const active = splats[0];
   if (active) {
     applyUniforms(active, startState);
   }
 }
 
+// ===== Debug display update function =====
+function updateDebugDisplay() {
+  // Update section progress values
+  sections.forEach((section, i) => {
+    const t = sectionProgress(section);
+    const valueEl = document.getElementById(`value-sec-${i + 1}`);
+    const sectionEl = document.getElementById(`debug-sec-${i + 1}`);
+    if (valueEl) {
+      valueEl.textContent = t.toFixed(2);
+    }
+    if (sectionEl) {
+      // Highlight active section
+      const idx = closestSectionIndex();
+      if (idx === i) {
+        sectionEl.classList.add('active');
+      } else {
+        sectionEl.classList.remove('active');
+      }
+    }
+  });
+
+  // Update animation state
+  const animStateEl = document.getElementById('auto-anim-value');
+  if (animStateEl) {
+    if (isAutoAnimating) {
+      animStateEl.textContent = `active (${autoAnimationProgress.toFixed(2)})`;
+      animStateEl.style.color = '#00ff88';
+    } else if (videoHasPlayed) {
+      animStateEl.textContent = 'completed';
+      animStateEl.style.color = '#666';
+    } else {
+      animStateEl.textContent = 'waiting for video';
+      animStateEl.style.color = '#ff6b6b';
+    }
+  }
+}
+
 function loop() {
   function frame() {
+    // Update debug display
+    updateDebugDisplay();
+    
     // If dispersion is disabled, show all splats for debugging
     if (!ENABLE_DISPERSION) {
       // Make all splats visible and apply default uniforms
@@ -558,8 +598,16 @@ function loop() {
       const elapsed = currentTime - autoAnimationStartTime;
       
       if (elapsed < AUTO_ANIMATION_DURATION) {
-        // Calculate progress from 0.0 to 0.5 over 4 seconds
-        autoAnimationProgress = (elapsed / AUTO_ANIMATION_DURATION) * 0.5;
+        // Two-phase animation with easing
+        if (elapsed < 3000) {
+          // First 3 seconds: SLOW movement from 0.26 to 0.35
+          const progress = elapsed / 3000;
+          autoAnimationProgress = 0.26 + (progress * 0.09); // 0.09 = 0.35 - 0.26
+        } else {
+          // Last 1.5 seconds: FAST movement from 0.35 to 0.5
+          const lastPhaseProgress = (elapsed - 3000) / 1500;
+          autoAnimationProgress = 0.35 + (lastPhaseProgress * 0.15); // 0.15 = 0.5 - 0.35
+        }
         
         const target = sampleState(autoAnimationProgress);
         const active = splats[0];
