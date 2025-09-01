@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Particle Debug Test</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+        }
+        #canvas {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        #debug {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: monospace;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="debug">Loading...</div>
+    
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.157.0/build/three.module.js"
+        }
+    }
+    </script>
+    
+    <script type="module">
+        import * as THREE from 'three';
+        
+        const debugEl = document.getElementById('debug');
+        const canvas = document.getElementById('canvas');
+        
+        // Simple test: Create visible white particles
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x000033, 1);
+        
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
+        camera.position.set(0, 0, 5);
+        
+        // Create simple particle system
+        const count = 1000;
+        const geometry = new THREE.BufferGeometry();
+        
+        const positions = new Float32Array(count * 3);
+        const colors = new Float32Array(count * 3);
+        
+        for (let i = 0; i < count; i++) {
+            // Position in a sphere
+            positions[i * 3] = (Math.random() - 0.5) * 4;
+            positions[i * 3 + 1] = (Math.random() - 0.5) * 4;
+            positions[i * 3 + 2] = (Math.random() - 0.5) * 4;
+            
+            // White color
+            colors[i * 3] = 1;
+            colors[i * 3 + 1] = 1;
+            colors[i * 3 + 2] = 1;
+        }
+        
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        
+        const material = new THREE.PointsMaterial({
+            size: 10,
+            vertexColors: true,
+            sizeAttenuation: false
+        });
+        
+        const points = new THREE.Points(geometry, material);
+        scene.add(points);
+        
+        debugEl.innerHTML = `
+            Particles: ${count}<br>
+            Renderer: ${renderer.domElement.width}x${renderer.domElement.height}<br>
+            Camera Z: ${camera.position.z}<br>
+            Points visible: ${points.visible}<br>
+            Material visible: ${material.visible}
+        `;
+        
+        // Animate
+        function animate() {
+            requestAnimationFrame(animate);
+            points.rotation.y += 0.01;
+            renderer.render(scene, camera);
+        }
+        animate();
+        
+        // Expose for debugging
+        window.debugScene = { scene, camera, renderer, points, material };
+    </script>
+</body>
+</html>
