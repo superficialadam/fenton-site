@@ -4,10 +4,10 @@
   "turbulenceAmount": 1.0,
   "turbulenceSpeed": 0.5,
   "turbulenceScale": 1.0,
-  "softness": 0.8,
-  "edgeFade": 1.2,
+  "softness": 0.1,
+  "edgeFade": 0.3,
   "backgroundColor": "#0a0a0a",
-  "blendMode": "normal",
-  "depthWrite": true,
+  "blendMode": "premultiplied",
+  "depthWrite": false,
   "showFrame": false
 }

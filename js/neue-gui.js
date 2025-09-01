@@ -15,11 +15,11 @@ const params = {
   turbulenceAmount: 1.2,
   turbulenceSpeed: 0.6,
   turbulenceScale: 0.9,
-  softness: 0.7,
-  edgeFade: 1.0,
+  softness: 0.2, // 0 = very soft, 1 = hard edge
+  edgeFade: 0.5, // Controls fade range
   backgroundColor: '#111111',
-  blendMode: 'normal',
-  depthWrite: true,
+  blendMode: 'premultiplied',
+  depthWrite: false,
   showFrame: true
 };
 
@@ -113,12 +113,16 @@ function setupGUI(frame) {
   particleFolder.add(params, 'particleSize', 0.001, 0.1, 0.001).onChange(v => {
     uniforms.uParticleSize.value = v;
   });
-  particleFolder.add(params, 'softness', 0, 1, 0.01).onChange(v => {
-    uniforms.uSoftness.value = v;
-  });
-  particleFolder.add(params, 'edgeFade', 0, 2, 0.01).onChange(v => {
-    uniforms.uEdgeFade.value = v;
-  });
+  particleFolder.add(params, 'softness', 0, 1, 0.01)
+    .name('Softness (0=soft, 1=hard)')
+    .onChange(v => {
+      uniforms.uSoftness.value = v;
+    });
+  particleFolder.add(params, 'edgeFade', 0, 1, 0.01)
+    .name('Fade Range')
+    .onChange(v => {
+      uniforms.uEdgeFade.value = v;
+    });
   particleFolder.open();
 
   // Turbulence folder
@@ -139,21 +143,26 @@ function setupGUI(frame) {
   renderFolder.addColor(params, 'backgroundColor').onChange(v => {
     renderer.setClearColor(v);
   });
-  renderFolder.add(params, 'blendMode', ['normal', 'additive', 'multiply']).onChange(v => {
+  renderFolder.add(params, 'blendMode', ['premultiplied', 'additive', 'screen', 'normal']).onChange(v => {
     switch(v) {
       case 'additive':
         particles.material.blending = THREE.AdditiveBlending;
         break;
-      case 'multiply':
-        particles.material.blending = THREE.MultiplyBlending;
+      case 'screen':
+        particles.material.blending = THREE.CustomBlending;
+        particles.material.blendEquation = THREE.AddEquation;
+        particles.material.blendSrc = THREE.OneFactor;
+        particles.material.blendDst = THREE.OneFactor;
         break;
-      default:
+      case 'normal':
         particles.material.blending = THREE.NormalBlending;
+        break;
+      default: // premultiplied
+        particles.material.blending = THREE.CustomBlending;
+        particles.material.blendEquation = THREE.AddEquation;
+        particles.material.blendSrc = THREE.OneFactor;
+        particles.material.blendDst = THREE.OneMinusSrcAlphaFactor;
     }
-    particles.material.needsUpdate = true;
-  });
-  renderFolder.add(params, 'depthWrite').onChange(v => {
-    particles.material.depthWrite = v;
     particles.material.needsUpdate = true;
   });
   renderFolder.add(params, 'showFrame').onChange(v => {
@@ -427,13 +436,14 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
       vec2 center = vUv - 0.5;
       float dist = length(center) * 2.0;
       
-      if (dist > 1.0) discard;
+      // Controllable soft edge - uSoftness controls where fade starts (0 = very soft, 1 = hard edge)
+      float fadeStart = mix(0.0, 0.95, uSoftness);
+      float fadeEnd = mix(fadeStart + 0.05, 1.0, uEdgeFade);
       
-      // Controllable soft edge
-      float edge = mix(0.99, uSoftness, uEdgeFade);
-      float alpha = 1.0 - smoothstep(edge, 1.0, dist);
+      float alpha = 1.0 - smoothstep(fadeStart, fadeEnd, dist);
       
-      gl_FragColor = vec4(vColor.rgb, vColor.a * alpha);
+      // Premultiply alpha for correct blending
+      gl_FragColor = vec4(vColor.rgb * alpha, alpha);
     }
   `;
 
@@ -442,9 +452,12 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     vertexShader,
     fragmentShader,
     transparent: true,
-    depthWrite: params.depthWrite,
+    depthWrite: false, // Always false for proper soft particles
     depthTest: true,
-    blending: THREE.NormalBlending
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneMinusSrcAlphaFactor
   });
 
   const mesh = new THREE.Mesh(geometry, material);
