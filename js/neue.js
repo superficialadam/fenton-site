@@ -192,7 +192,7 @@ function makePoints({ count, wCells, hCells, uvs, colors }) {
   const aColor = new Uint8Array(colors.length);
   aColor.set(colors);
   geom.setAttribute('aColor', new THREE.Uint8BufferAttribute(aColor, 4, true)); // normalized
-  
+
   // Log some debug info
   console.log('Geometry attributes:', Object.keys(geom.attributes));
   console.log('Position buffer length:', positions.length);
@@ -203,7 +203,7 @@ function makePoints({ count, wCells, hCells, uvs, colors }) {
     uProgress: { value: 0 },
     uPlane: { value: new THREE.Vector2(1, 1) },
     uImgAspect: { value: wCells / hCells },
-    uPointSize: { value: DEBUG_BIGGER_POINTS ? 20.0 : 6.0 }
+    uPointSize: { value: DEBUG_BIGGER_POINTS ? 8.0 : 3.5 }
   };
 
   const vert = `
@@ -245,7 +245,9 @@ function makePoints({ count, wCells, hCells, uvs, colors }) {
 
       // Update the position attribute (used by THREE.js internally)
       gl_Position = projectionMatrix * modelViewMatrix * vec4(finalPos, 1.0);
-      gl_PointSize = uPointSize;
+      
+      // Just use a fixed small size
+      gl_PointSize = 25.0;
     }
   `;
 
@@ -285,7 +287,8 @@ function makePoints({ count, wCells, hCells, uvs, colors }) {
     fragmentShader: frag,
     transparent: !DEBUG_SOLID_COLOR,
     depthWrite: false,
-    blending: THREE.NormalBlending
+    blending: THREE.NormalBlending,
+    sizeAttenuation: false  // Disable size attenuation
   });
 
   const pts = new THREE.Points(geom, mat);

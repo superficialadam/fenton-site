@@ -1,4 +1,4 @@
-// neue-fixed.js — Fixed version with proper particle rendering
+// neue-fixed.js — Using instanced planes for controllable particle size
 import * as THREE from 'three';
 
 const CELLS_URL = './public/cells.bin';
@@ -8,7 +8,11 @@ const progressEl = document.getElementById('progress');
 const progressValEl = document.getElementById('progressVal');
 const statsEl = document.getElementById('stats');
 
-let renderer, scene, camera, points, uniforms, clock;
+// ---- DEBUG SWITCHES ----
+const PARTICLE_SIZE = 0.25; // Controllable particle size (in world units)
+const DEBUG_FRAME_HELPER = true;
+
+let renderer, scene, camera, particles, uniforms, clock;
 
 init().catch(err => {
   console.error('Init error:', err);
@@ -25,7 +29,7 @@ async function init() {
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight, false);
-  renderer.setClearColor(0x000022, 1);
+  renderer.setClearColor(0x111111, 1);
 
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
@@ -46,18 +50,20 @@ async function init() {
     data = fallbackCells();
   }
 
-  points = makePoints(data);
-  scene.add(points);
+  particles = makeInstancedParticles(data);
+  scene.add(particles);
 
-  uniforms = points.material.uniforms;
+  uniforms = particles.material.uniforms;
   uniforms.uPlane.value.copy(planeSizeAtZ0());
 
-  // Add axes helper for debugging
-  const axesHelper = new THREE.AxesHelper(5);
-  scene.add(axesHelper);
+  // Optional frame helper
+  if (DEBUG_FRAME_HELPER) {
+    const frame = makeFrameHelper(uniforms.uPlane.value, data.wCells / data.hCells);
+    scene.add(frame);
+  }
 
   // Expose for DevTools
-  window.points = points;
+  window.particles = particles;
 
   // Slider hookup
   const setProg = (v) => {
@@ -143,17 +149,21 @@ function fallbackCells() {
   return { count, wCells, hCells, block, uvs, colors };
 }
 
-function makePoints({ count, wCells, hCells, uvs, colors }) {
-  const geom = new THREE.BufferGeometry();
-  
-  // Create position buffer (initially at origin, will be updated in shader)
-  const positions = new Float32Array(count * 3);
-  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  
-  // UV attribute
-  geom.setAttribute('aUV', new THREE.BufferAttribute(uvs, 2));
+function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
+  // Create a single plane geometry that will be instanced
+  const planeGeom = new THREE.PlaneGeometry(PARTICLE_SIZE, PARTICLE_SIZE);
 
-  // Random start positions (sphere)
+  // Create instanced buffer geometry
+  const geometry = new THREE.InstancedBufferGeometry();
+  geometry.index = planeGeom.index;
+  geometry.attributes.position = planeGeom.attributes.position;
+  geometry.attributes.uv = planeGeom.attributes.uv;
+
+  // Add instance attributes
+  geometry.setAttribute('aInstanceUV', new THREE.InstancedBufferAttribute(uvs, 2));
+  geometry.setAttribute('aInstanceColor', new THREE.InstancedBufferAttribute(new Uint8Array(colors), 4, true));
+
+  // Random start positions
   const aStart = new Float32Array(count * 3);
   for (let i = 0; i < count; i++) {
     const r = 2.5 * Math.cbrt(Math.random());
@@ -163,31 +173,29 @@ function makePoints({ count, wCells, hCells, uvs, colors }) {
     aStart[i * 3 + 1] = r * Math.sin(ph) * Math.sin(th);
     aStart[i * 3 + 2] = r * Math.cos(ph);
   }
-  geom.setAttribute('aStart', new THREE.BufferAttribute(aStart, 3));
-
-  // Color attribute
-  geom.setAttribute('aColor', new THREE.Uint8BufferAttribute(colors, 4, true));
+  geometry.setAttribute('aInstanceStart', new THREE.InstancedBufferAttribute(aStart, 3));
 
   const uniforms = {
     uTime: { value: 0 },
     uProgress: { value: 0.5 },
     uPlane: { value: new THREE.Vector2(1, 1) },
     uImgAspect: { value: wCells / hCells },
-    uPointSize: { value: 30.0 }  // Bigger for visibility
+    uParticleSize: { value: PARTICLE_SIZE }
   };
 
   const vertexShader = `
-    attribute vec2 aUV;
-    attribute vec3 aStart;
-    attribute vec4 aColor;
+    attribute vec2 aInstanceUV;
+    attribute vec3 aInstanceStart;
+    attribute vec4 aInstanceColor;
     
     varying vec4 vColor;
+    varying vec2 vUv;
 
     uniform float uTime;
     uniform float uProgress;
-    uniform float uPointSize;
     uniform float uImgAspect;
     uniform vec2 uPlane;
+    uniform float uParticleSize;
 
     vec3 n3(vec3 p){
       return vec3(
@@ -198,11 +206,12 @@ function makePoints({ count, wCells, hCells, uvs, colors }) {
     }
 
     void main(){
-      vColor = aColor;
+      vColor = aInstanceColor;
+      vUv = uv;
 
-      // Map UV to image plane
+      // Map instance UV to image plane
       float planeAspect = uPlane.x / uPlane.y;
-      vec2 p = aUV * 2.0 - 1.0;
+      vec2 p = aInstanceUV * 2.0 - 1.0;
       
       if (planeAspect > uImgAspect) {
         p.x *= (uImgAspect / planeAspect);
@@ -213,30 +222,41 @@ function makePoints({ count, wCells, hCells, uvs, colors }) {
       vec3 target = vec3(p * 0.5 * uPlane, 0.0);
 
       // Animated start position
-      vec3 start = aStart;
+      vec3 start = aInstanceStart;
       vec3 wobble = n3(start * 0.9 + uTime * 0.6);
       vec3 turbulent = start + wobble * 1.2;
 
       // Interpolate between start and target
       float t = smoothstep(0.0, 1.0, uProgress);
-      vec3 finalPos = mix(turbulent, target, t);
+      vec3 instancePos = mix(turbulent, target, t);
 
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(finalPos, 1.0);
-      gl_PointSize = uPointSize;
+      // Apply instance transform to vertex position
+      vec3 transformed = position + instancePos;
+      
+      // Billboard the particle to face camera
+      vec4 mvPosition = modelViewMatrix * vec4(instancePos, 1.0);
+      mvPosition.xyz += position * uParticleSize;
+      
+      gl_Position = projectionMatrix * mvPosition;
     }
   `;
 
   const fragmentShader = `
     varying vec4 vColor;
+    varying vec2 vUv;
     
     void main(){
-      vec2 pc = gl_PointCoord * 2.0 - 1.0;
-      float r2 = dot(pc, pc);
-      float alpha = 1.0 - smoothstep(0.7, 1.0, r2);
+      // Create circular particle
+      vec2 center = vUv - 0.5;
+      float dist = length(center) * 2.0;
       
-      if (alpha < 0.01) discard;
+      if (dist > 1.0) discard;
       
-      gl_FragColor = vec4(vColor.rgb, vColor.a * alpha);
+      // Soft edge
+      float alpha = 1.0 - smoothstep(0.7, 1.0, dist);
+      
+      // Use opaque blending to prevent accumulation
+      gl_FragColor = vec4(vColor.rgb * alpha, alpha);
     }
   `;
 
@@ -245,14 +265,36 @@ function makePoints({ count, wCells, hCells, uvs, colors }) {
     vertexShader,
     fragmentShader,
     transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending
+    depthWrite: true, // Enable depth writing to prevent accumulation
+    depthTest: true,
+    blending: THREE.NormalBlending
   });
 
-  const points = new THREE.Points(geom, material);
-  
-  console.log(`Points created: ${count} particles`);
-  console.log('First 5 colors:', Array.from(colors.slice(0, 20)));
-  
-  return points;
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.frustumCulled = false;
+
+  console.log(`Instanced particles created: ${count} instances, size: ${PARTICLE_SIZE}`);
+
+  return mesh;
+}
+
+function makeFrameHelper(planeVec2, imgAspect) {
+  const planeAspect = planeVec2.x / planeVec2.y;
+  let w = planeVec2.x * 0.5, h = planeVec2.y * 0.5;
+  if (planeAspect > imgAspect) {
+    w *= imgAspect / planeAspect;
+  } else {
+    h *= planeAspect / imgAspect;
+  }
+  const hw = w, hh = h;
+  const g = new THREE.BufferGeometry();
+  const verts = new Float32Array([
+    -hw, -hh, 0, hw, -hh, 0,
+    hw, -hh, 0, hw, hh, 0,
+    hw, hh, 0, -hw, hh, 0,
+    -hw, hh, 0, -hw, -hh, 0
+  ]);
+  g.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+  const m = new THREE.LineBasicMaterial({ color: 0x44ff88 });
+  return new THREE.LineSegments(g, m);
 }
