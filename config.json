@@ -1,0 +1,13 @@
+{
+  "particleSize": 0.015,
+  "progress": 0.7,
+  "turbulenceAmount": 1.0,
+  "turbulenceSpeed": 0.5,
+  "turbulenceScale": 1.0,
+  "softness": 0.8,
+  "edgeFade": 1.2,
+  "backgroundColor": "#0a0a0a",
+  "blendMode": "normal",
+  "depthWrite": true,
+  "showFrame": false
+}

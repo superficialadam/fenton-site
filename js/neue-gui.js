@@ -1,0 +1,477 @@
+// neue-gui.js — With lil-gui controls and JSON config
+import * as THREE from 'three';
+import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm';
+
+const CELLS_URL = './public/cells.bin';
+const CONFIG_URL = './config.json'; // Default config file
+
+const canvas = document.getElementById('bg-splats');
+const statsEl = document.getElementById('stats');
+
+// Default parameters
+const params = {
+  particleSize: 0.02,
+  progress: 0.5,
+  turbulenceAmount: 1.2,
+  turbulenceSpeed: 0.6,
+  turbulenceScale: 0.9,
+  softness: 0.7,
+  edgeFade: 1.0,
+  backgroundColor: '#111111',
+  blendMode: 'normal',
+  depthWrite: true,
+  showFrame: true
+};
+
+let renderer, scene, camera, particles, uniforms, clock, gui;
+
+init().catch(err => {
+  console.error('Init error:', err);
+  if (statsEl) statsEl.textContent = 'Init error (see console).';
+});
+
+async function init() {
+  // Try to load config file
+  await loadConfig(CONFIG_URL);
+
+  // Renderer / Camera / Scene
+  renderer = new THREE.WebGLRenderer({
+    canvas,
+    antialias: false,
+    alpha: false,
+    powerPreference: 'high-performance'
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  renderer.setClearColor(params.backgroundColor);
+
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
+  camera.position.set(0, 0, 6);
+
+  // Expose for DevTools
+  Object.assign(window, { scene, camera, renderer });
+
+  // Load pre-baked cells
+  let data;
+  try {
+    data = await loadCellsBin(CELLS_URL);
+    console.log('cells.bin loaded:', data);
+    if (statsEl) statsEl.textContent = `cells: ${data.count} | grid: ${data.wCells}×${data.hCells}`;
+  } catch (e) {
+    console.warn('cells.bin failed to load; using fallback.', e);
+    if (statsEl) statsEl.textContent = 'Using fallback particles';
+    data = fallbackCells();
+  }
+
+  particles = makeInstancedParticles(data);
+  scene.add(particles);
+
+  uniforms = particles.material.uniforms;
+  uniforms.uPlane.value.copy(planeSizeAtZ0());
+
+  // Frame helper
+  const frame = makeFrameHelper(uniforms.uPlane.value, data.wCells / data.hCells);
+  frame.visible = params.showFrame;
+  scene.add(frame);
+  window.frame = frame;
+
+  // Setup GUI
+  setupGUI(frame);
+
+  // Expose for DevTools
+  window.particles = particles;
+
+  // Animate
+  clock = new THREE.Clock();
+  renderer.setAnimationLoop(() => {
+    uniforms.uTime.value = clock.getElapsedTime();
+    renderer.render(scene, camera);
+  });
+
+  // Resize
+  window.addEventListener('resize', onResize);
+  console.log('Init complete. Particles:', data.count);
+}
+
+function setupGUI(frame) {
+  // Remove old HUD
+  const oldHud = document.getElementById('hud');
+  if (oldHud) oldHud.remove();
+
+  gui = new GUI({ title: 'Particle Controls' });
+  
+  // Animation folder
+  const animFolder = gui.addFolder('Animation');
+  animFolder.add(params, 'progress', 0, 1, 0.001).onChange(v => {
+    uniforms.uProgress.value = v;
+  });
+  animFolder.open();
+
+  // Particles folder
+  const particleFolder = gui.addFolder('Particles');
+  particleFolder.add(params, 'particleSize', 0.001, 0.1, 0.001).onChange(v => {
+    uniforms.uParticleSize.value = v;
+  });
+  particleFolder.add(params, 'softness', 0, 1, 0.01).onChange(v => {
+    uniforms.uSoftness.value = v;
+  });
+  particleFolder.add(params, 'edgeFade', 0, 2, 0.01).onChange(v => {
+    uniforms.uEdgeFade.value = v;
+  });
+  particleFolder.open();
+
+  // Turbulence folder
+  const turbFolder = gui.addFolder('Turbulence');
+  turbFolder.add(params, 'turbulenceAmount', 0, 3, 0.01).onChange(v => {
+    uniforms.uTurbulenceAmount.value = v;
+  });
+  turbFolder.add(params, 'turbulenceSpeed', 0, 2, 0.01).onChange(v => {
+    uniforms.uTurbulenceSpeed.value = v;
+  });
+  turbFolder.add(params, 'turbulenceScale', 0.1, 2, 0.01).onChange(v => {
+    uniforms.uTurbulenceScale.value = v;
+  });
+  turbFolder.open();
+
+  // Rendering folder
+  const renderFolder = gui.addFolder('Rendering');
+  renderFolder.addColor(params, 'backgroundColor').onChange(v => {
+    renderer.setClearColor(v);
+  });
+  renderFolder.add(params, 'blendMode', ['normal', 'additive', 'multiply']).onChange(v => {
+    switch(v) {
+      case 'additive':
+        particles.material.blending = THREE.AdditiveBlending;
+        break;
+      case 'multiply':
+        particles.material.blending = THREE.MultiplyBlending;
+        break;
+      default:
+        particles.material.blending = THREE.NormalBlending;
+    }
+    particles.material.needsUpdate = true;
+  });
+  renderFolder.add(params, 'depthWrite').onChange(v => {
+    particles.material.depthWrite = v;
+    particles.material.needsUpdate = true;
+  });
+  renderFolder.add(params, 'showFrame').onChange(v => {
+    frame.visible = v;
+  });
+
+  // Config folder
+  const configFolder = gui.addFolder('Config');
+  configFolder.add({ 
+    save: () => saveConfig() 
+  }, 'save').name('Save Config');
+  
+  configFolder.add({ 
+    load: () => loadConfigDialog() 
+  }, 'load').name('Load Config');
+  
+  configFolder.add({ 
+    export: () => exportConfig() 
+  }, 'export').name('Export JSON');
+
+  // Apply initial values
+  uniforms.uProgress.value = params.progress;
+  uniforms.uParticleSize.value = params.particleSize;
+  uniforms.uSoftness.value = params.softness;
+  uniforms.uEdgeFade.value = params.edgeFade;
+  uniforms.uTurbulenceAmount.value = params.turbulenceAmount;
+  uniforms.uTurbulenceSpeed.value = params.turbulenceSpeed;
+  uniforms.uTurbulenceScale.value = params.turbulenceScale;
+}
+
+function saveConfig() {
+  const config = { ...params };
+  const json = JSON.stringify(config, null, 2);
+  
+  // Save to localStorage
+  localStorage.setItem('particleConfig', json);
+  
+  // Also download as file
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'particle-config.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  
+  console.log('Config saved to localStorage and downloaded');
+}
+
+function exportConfig() {
+  const config = { ...params };
+  const json = JSON.stringify(config, null, 2);
+  console.log('Current config:', json);
+  alert('Config exported to console');
+}
+
+async function loadConfig(url) {
+  try {
+    // First try localStorage
+    const stored = localStorage.getItem('particleConfig');
+    if (stored) {
+      const config = JSON.parse(stored);
+      Object.assign(params, config);
+      console.log('Loaded config from localStorage');
+      return;
+    }
+    
+    // Then try file
+    const response = await fetch(url);
+    if (response.ok) {
+      const config = await response.json();
+      Object.assign(params, config);
+      console.log('Loaded config from file:', url);
+    }
+  } catch (e) {
+    console.log('No config file found, using defaults');
+  }
+}
+
+function loadConfigDialog() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json';
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const text = await file.text();
+      try {
+        const config = JSON.parse(text);
+        Object.assign(params, config);
+        
+        // Update GUI
+        gui.destroy();
+        setupGUI(window.frame);
+        
+        console.log('Config loaded from file');
+      } catch (err) {
+        console.error('Invalid config file:', err);
+        alert('Invalid config file');
+      }
+    }
+  };
+  input.click();
+}
+
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  if (uniforms) uniforms.uPlane.value.copy(planeSizeAtZ0());
+}
+
+function planeSizeAtZ0() {
+  const dist = Math.abs(camera.position.z - 0.0);
+  const height = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)) * dist;
+  const width = height * camera.aspect;
+  return new THREE.Vector2(width, height);
+}
+
+async function loadCellsBin(url) {
+  const res = await fetch(url, { cache: 'no-cache' });
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  const buf = await res.arrayBuffer();
+  const dv = new DataView(buf);
+  let o = 0;
+
+  const MAGIC = dv.getUint32(o, true); o += 4;
+  if (MAGIC !== 0x43454C31) throw new Error('Bad magic in cells.bin');
+  const count = dv.getUint32(o, true); o += 4;
+  const wCells = dv.getUint16(o, true); o += 2;
+  const hCells = dv.getUint16(o, true); o += 2;
+  const block = dv.getUint16(o, true); o += 2;
+  o += 2; // flags
+
+  const uvs = new Float32Array(count * 2);
+  const colors = new Uint8Array(count * 4);
+
+  for (let i = 0; i < count; i++) {
+    uvs[i * 2 + 0] = dv.getFloat32(o, true); o += 4;
+    uvs[i * 2 + 1] = 1.0 - dv.getFloat32(o, true); o += 4; // FLIP Y HERE
+    colors[i * 4 + 0] = dv.getUint8(o++); // R
+    colors[i * 4 + 1] = dv.getUint8(o++); // G
+    colors[i * 4 + 2] = dv.getUint8(o++); // B
+    colors[i * 4 + 3] = dv.getUint8(o++); // A
+  }
+  return { count, wCells, hCells, block, uvs, colors };
+}
+
+function fallbackCells() {
+  const count = 5000, wCells = 100, hCells = 50, block = 4;
+  const uvs = new Float32Array(count * 2);
+  const colors = new Uint8Array(count * 4);
+  for (let i = 0; i < count; i++) {
+    uvs[i * 2 + 0] = Math.random();
+    uvs[i * 2 + 1] = Math.random();
+    colors[i * 4 + 0] = Math.random() * 255;
+    colors[i * 4 + 1] = Math.random() * 255;
+    colors[i * 4 + 2] = Math.random() * 255;
+    colors[i * 4 + 3] = 255;
+  }
+  return { count, wCells, hCells, block, uvs, colors };
+}
+
+function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
+  // Create a single plane geometry that will be instanced
+  const planeGeom = new THREE.PlaneGeometry(1, 1);
+  
+  // Create instanced buffer geometry
+  const geometry = new THREE.InstancedBufferGeometry();
+  geometry.index = planeGeom.index;
+  geometry.attributes.position = planeGeom.attributes.position;
+  geometry.attributes.uv = planeGeom.attributes.uv;
+  
+  // Add instance attributes
+  geometry.setAttribute('aInstanceUV', new THREE.InstancedBufferAttribute(uvs, 2));
+  geometry.setAttribute('aInstanceColor', new THREE.InstancedBufferAttribute(new Uint8Array(colors), 4, true));
+  
+  // Random start positions
+  const aStart = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const r = 2.5 * Math.cbrt(Math.random());
+    const th = Math.random() * Math.PI * 2;
+    const ph = Math.acos(2 * Math.random() - 1);
+    aStart[i * 3 + 0] = r * Math.sin(ph) * Math.cos(th);
+    aStart[i * 3 + 1] = r * Math.sin(ph) * Math.sin(th);
+    aStart[i * 3 + 2] = r * Math.cos(ph);
+  }
+  geometry.setAttribute('aInstanceStart', new THREE.InstancedBufferAttribute(aStart, 3));
+
+  const uniforms = {
+    uTime: { value: 0 },
+    uProgress: { value: 0.5 },
+    uPlane: { value: new THREE.Vector2(1, 1) },
+    uImgAspect: { value: wCells / hCells },
+    uParticleSize: { value: params.particleSize },
+    uSoftness: { value: params.softness },
+    uEdgeFade: { value: params.edgeFade },
+    uTurbulenceAmount: { value: params.turbulenceAmount },
+    uTurbulenceSpeed: { value: params.turbulenceSpeed },
+    uTurbulenceScale: { value: params.turbulenceScale }
+  };
+
+  const vertexShader = `
+    attribute vec2 aInstanceUV;
+    attribute vec3 aInstanceStart;
+    attribute vec4 aInstanceColor;
+    
+    varying vec4 vColor;
+    varying vec2 vUv;
+
+    uniform float uTime;
+    uniform float uProgress;
+    uniform float uImgAspect;
+    uniform vec2 uPlane;
+    uniform float uParticleSize;
+    uniform float uTurbulenceAmount;
+    uniform float uTurbulenceSpeed;
+    uniform float uTurbulenceScale;
+
+    vec3 n3(vec3 p){
+      return vec3(
+        sin(p.x + 1.7) + sin(p.y*1.3 + 2.1) + sin(p.z*0.7 + 4.2),
+        sin(p.x*0.9 + 3.4) + sin(p.y + 5.2) + sin(p.z*1.1 + 1.3),
+        sin(p.x*1.2 + 2.7) + sin(p.y*0.8 + 6.1) + sin(p.z + 0.9)
+      ) * 0.33;
+    }
+
+    void main(){
+      vColor = aInstanceColor;
+      vUv = uv;
+
+      // Map instance UV to image plane
+      float planeAspect = uPlane.x / uPlane.y;
+      vec2 p = aInstanceUV * 2.0 - 1.0;
+      
+      if (planeAspect > uImgAspect) {
+        p.x *= (uImgAspect / planeAspect);
+      } else {
+        p.y *= (planeAspect / uImgAspect);
+      }
+      
+      vec3 target = vec3(p * 0.5 * uPlane, 0.0);
+
+      // Animated start position with controllable turbulence
+      vec3 start = aInstanceStart;
+      vec3 wobble = n3(start * uTurbulenceScale + uTime * uTurbulenceSpeed);
+      vec3 turbulent = start + wobble * uTurbulenceAmount;
+
+      // Interpolate between start and target
+      float t = smoothstep(0.0, 1.0, uProgress);
+      vec3 instancePos = mix(turbulent, target, t);
+
+      // Billboard the particle to face camera
+      vec4 mvPosition = modelViewMatrix * vec4(instancePos, 1.0);
+      mvPosition.xyz += position * uParticleSize;
+      
+      gl_Position = projectionMatrix * mvPosition;
+    }
+  `;
+
+  const fragmentShader = `
+    varying vec4 vColor;
+    varying vec2 vUv;
+    
+    uniform float uSoftness;
+    uniform float uEdgeFade;
+    
+    void main(){
+      // Create circular particle
+      vec2 center = vUv - 0.5;
+      float dist = length(center) * 2.0;
+      
+      if (dist > 1.0) discard;
+      
+      // Controllable soft edge
+      float edge = mix(0.99, uSoftness, uEdgeFade);
+      float alpha = 1.0 - smoothstep(edge, 1.0, dist);
+      
+      gl_FragColor = vec4(vColor.rgb, vColor.a * alpha);
+    }
+  `;
+
+  const material = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader,
+    fragmentShader,
+    transparent: true,
+    depthWrite: params.depthWrite,
+    depthTest: true,
+    blending: THREE.NormalBlending
+  });
+
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.frustumCulled = false;
+  
+  console.log(`Instanced particles created: ${count} instances`);
+  
+  return mesh;
+}
+
+function makeFrameHelper(planeVec2, imgAspect) {
+  const planeAspect = planeVec2.x / planeVec2.y;
+  let w = planeVec2.x * 0.5, h = planeVec2.y * 0.5;
+  if (planeAspect > imgAspect) {
+    w *= imgAspect / planeAspect;
+  } else {
+    h *= planeAspect / imgAspect;
+  }
+  const hw = w, hh = h;
+  const g = new THREE.BufferGeometry();
+  const verts = new Float32Array([
+    -hw, -hh, 0, hw, -hh, 0,
+    hw, -hh, 0, hw, hh, 0,
+    hw, hh, 0, -hw, hh, 0,
+    -hw, hh, 0, -hw, -hh, 0
+  ]);
+  g.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+  const m = new THREE.LineBasicMaterial({ color: 0x44ff88 });
+  return new THREE.LineSegments(g, m);
+}
