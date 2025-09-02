@@ -11,7 +11,7 @@ const statsEl = document.getElementById('stats');
 // Default parameters
 const params = {
   particleSize: 0.02,
-  progress: 0.5,
+  movePercentage: 0.0, // 0-1, percentage of particles that should move to target
   turbulenceAmount: 1.2,
   turbulenceSpeed: 0.6,
   turbulenceScale: 0.9,
@@ -20,6 +20,8 @@ const params = {
   visiblePercentage: 1.0, // 0-1, percentage of particles that should be visible
   fadeSpeedMin: 30, // Min frames to fade (30 = 0.5 sec at 60fps)
   fadeSpeedMax: 120, // Max frames to fade (120 = 2 sec at 60fps)
+  moveSpeedMin: 60, // Min frames to reach target position
+  moveSpeedMax: 180, // Max frames to reach target position
   backgroundColor: '#111111',
   blendMode: 'premultiplied',
   depthWrite: false,
@@ -82,8 +84,9 @@ async function init() {
   // Setup GUI
   setupGUI(frame);
   
-  // Initialize particle visibility
+  // Initialize particle visibility and movement
   updateParticleTargets(particles.geometry);
+  updateMovementTargets(particles.geometry);
 
   // Expose for DevTools
   window.particles = particles;
@@ -99,8 +102,9 @@ async function init() {
     uniforms.uTime.value = currentTime;
     uniforms.uDeltaTime.value = deltaTime;
     
-    // Update particle visibility
+    // Update particle visibility and movement
     updateParticleVisibility(particles.geometry, deltaTime);
+    updateParticleMovement(particles.geometry, deltaTime);
     
     renderer.render(scene, camera);
   });
@@ -119,9 +123,22 @@ function setupGUI(frame) {
   
   // Animation folder
   const animFolder = gui.addFolder('Animation');
-  animFolder.add(params, 'progress', 0, 1, 0.001).onChange(v => {
-    uniforms.uProgress.value = v;
-  });
+  animFolder.add(params, 'movePercentage', 0, 1, 0.01)
+    .name('Move to Target %')
+    .onChange(v => {
+      uniforms.uMovePercentage.value = v;
+      updateMovementTargets(particles.geometry);
+    });
+  animFolder.add(params, 'moveSpeedMin', 1, 300, 1)
+    .name('Move Speed Min (frames)')
+    .onChange(v => {
+      updateMoveSpeeds(particles.geometry);
+    });
+  animFolder.add(params, 'moveSpeedMax', 1, 300, 1)
+    .name('Move Speed Max (frames)')
+    .onChange(v => {
+      updateMoveSpeeds(particles.geometry);
+    });
   animFolder.open();
 
   // Particles folder
@@ -220,7 +237,6 @@ function setupGUI(frame) {
   }, 'export').name('Export JSON');
 
   // Apply initial values
-  uniforms.uProgress.value = params.progress;
   uniforms.uParticleSize.value = params.particleSize;
   uniforms.uSoftness.value = params.softness;
   uniforms.uEdgeFade.value = params.edgeFade;
@@ -435,10 +451,33 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     aFadeSpeed[i] = 1.0 / frames;
   }
   geometry.setAttribute('aFadeSpeed', new THREE.InstancedBufferAttribute(aFadeSpeed, 1));
+  
+  // Movement system attributes
+  // Current progress for each particle (0 = start position, 1 = target position)
+  const aProgress = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    aProgress[i] = 0.0; // Start at turbulent position
+  }
+  geometry.setAttribute('aProgress', new THREE.InstancedBufferAttribute(aProgress, 1));
+  
+  // Target progress (what we're moving towards)
+  const aTargetProgress = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    aTargetProgress[i] = 0.0; // Initially not moving to target
+  }
+  geometry.setAttribute('aTargetProgress', new THREE.InstancedBufferAttribute(aTargetProgress, 1));
+  
+  // Movement speed for each particle (deterministic based on index)
+  const aMoveSpeed = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const t = seedRandom(i * 67.891 + 23.456); // Different seed for movement
+    const frames = params.moveSpeedMin + t * (params.moveSpeedMax - params.moveSpeedMin);
+    aMoveSpeed[i] = 1.0 / frames;
+  }
+  geometry.setAttribute('aMoveSpeed', new THREE.InstancedBufferAttribute(aMoveSpeed, 1));
 
   const uniforms = {
     uTime: { value: 0 },
-    uProgress: { value: 0.5 },
     uPlane: { value: new THREE.Vector2(1, 1) },
     uImgAspect: { value: wCells / hCells },
     uParticleSize: { value: params.particleSize },
@@ -448,6 +487,7 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     uTurbulenceSpeed: { value: params.turbulenceSpeed },
     uTurbulenceScale: { value: params.turbulenceScale },
     uVisiblePercentage: { value: params.visiblePercentage },
+    uMovePercentage: { value: params.movePercentage },
     uDeltaTime: { value: 0 }
   };
 
@@ -456,13 +496,13 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     attribute vec3 aInstanceStart;
     attribute vec4 aInstanceColor;
     attribute float aOpacity;
+    attribute float aProgress;
     
     varying vec4 vColor;
     varying vec2 vUv;
     varying float vOpacity;
 
     uniform float uTime;
-    uniform float uProgress;
     uniform float uImgAspect;
     uniform vec2 uPlane;
     uniform float uParticleSize;
@@ -500,8 +540,8 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
       vec3 wobble = n3(start * uTurbulenceScale + uTime * uTurbulenceSpeed);
       vec3 turbulent = start + wobble * uTurbulenceAmount;
 
-      // Interpolate between start and target
-      float t = smoothstep(0.0, 1.0, uProgress);
+      // Use per-particle progress for smooth individual transitions
+      float t = smoothstep(0.0, 1.0, aProgress);
       vec3 instancePos = mix(turbulent, target, t);
 
       // Billboard the particle to face camera
@@ -640,4 +680,68 @@ function updateParticleVisibility(geometry, deltaTime) {
   }
   
   geometry.attributes.aOpacity.needsUpdate = true;
+}
+
+// Update movement targets based on percentage (like opacity)
+function updateMovementTargets(geometry) {
+  const count = geometry.attributes.aTargetProgress.count;
+  const targetProgress = geometry.attributes.aTargetProgress.array;
+  const particleOrder = geometry.attributes.aParticleOrder.array;
+  
+  // Set target progress based on particle order
+  // Particles with order < movePercentage should move to target
+  for (let i = 0; i < count; i++) {
+    targetProgress[i] = particleOrder[i] < params.movePercentage ? 1.0 : 0.0;
+  }
+  
+  geometry.attributes.aTargetProgress.needsUpdate = true;
+}
+
+// Update move speeds when parameters change (keeps deterministic ratio)
+function updateMoveSpeeds(geometry) {
+  const count = geometry.attributes.aMoveSpeed.count;
+  const moveSpeed = geometry.attributes.aMoveSpeed.array;
+  
+  // Seeded random function
+  const seedRandom = (seed) => {
+    let x = Math.sin(seed) * 10000;
+    return x - Math.floor(x);
+  };
+  
+  for (let i = 0; i < count; i++) {
+    // Use deterministic random based on particle index
+    const t = seedRandom(i * 67.891 + 23.456);
+    const frames = params.moveSpeedMin + t * (params.moveSpeedMax - params.moveSpeedMin);
+    moveSpeed[i] = 1.0 / frames;
+  }
+  
+  geometry.attributes.aMoveSpeed.needsUpdate = true;
+}
+
+// Update particle movement every frame
+function updateParticleMovement(geometry, deltaTime) {
+  const count = geometry.attributes.aProgress.count;
+  const progress = geometry.attributes.aProgress.array;
+  const targetProgress = geometry.attributes.aTargetProgress.array;
+  const moveSpeed = geometry.attributes.aMoveSpeed.array;
+  
+  // Assuming 60 FPS for frame-based move speed
+  const frameMultiplier = deltaTime * 60;
+  
+  for (let i = 0; i < count; i++) {
+    const diff = targetProgress[i] - progress[i];
+    
+    if (Math.abs(diff) > 0.001) {
+      // Smooth transition towards target
+      const step = moveSpeed[i] * frameMultiplier;
+      
+      if (diff > 0) {
+        progress[i] = Math.min(progress[i] + step, targetProgress[i]);
+      } else {
+        progress[i] = Math.max(progress[i] - step, targetProgress[i]);
+      }
+    }
+  }
+  
+  geometry.attributes.aProgress.needsUpdate = true;
 }
