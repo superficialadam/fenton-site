@@ -17,6 +17,9 @@ const params = {
   turbulenceScale: 0.9,
   softness: 0.2, // 0 = very soft, 1 = hard edge
   edgeFade: 0.5, // Controls fade range
+  visiblePercentage: 1.0, // 0-1, percentage of particles that should be visible
+  fadeSpeedMin: 30, // Min frames to fade (30 = 0.5 sec at 60fps)
+  fadeSpeedMax: 120, // Max frames to fade (120 = 2 sec at 60fps)
   backgroundColor: '#111111',
   blendMode: 'premultiplied',
   depthWrite: false,
@@ -78,14 +81,27 @@ async function init() {
 
   // Setup GUI
   setupGUI(frame);
+  
+  // Initialize particle visibility
+  updateParticleTargets(particles.geometry);
 
   // Expose for DevTools
   window.particles = particles;
 
   // Animate
   clock = new THREE.Clock();
+  let lastTime = 0;
   renderer.setAnimationLoop(() => {
-    uniforms.uTime.value = clock.getElapsedTime();
+    const currentTime = clock.getElapsedTime();
+    const deltaTime = currentTime - lastTime;
+    lastTime = currentTime;
+    
+    uniforms.uTime.value = currentTime;
+    uniforms.uDeltaTime.value = deltaTime;
+    
+    // Update particle visibility
+    updateParticleVisibility(particles.geometry, deltaTime);
+    
     renderer.render(scene, camera);
   });
 
@@ -124,6 +140,26 @@ function setupGUI(frame) {
       uniforms.uEdgeFade.value = v;
     });
   particleFolder.open();
+  
+  // Visibility folder
+  const visibilityFolder = gui.addFolder('Visibility');
+  visibilityFolder.add(params, 'visiblePercentage', 0, 1, 0.01)
+    .name('Visible %')
+    .onChange(v => {
+      uniforms.uVisiblePercentage.value = v;
+      updateParticleTargets(particles.geometry);
+    });
+  visibilityFolder.add(params, 'fadeSpeedMin', 1, 300, 1)
+    .name('Fade Speed Min (frames)')
+    .onChange(v => {
+      updateFadeSpeeds(particles.geometry);
+    });
+  visibilityFolder.add(params, 'fadeSpeedMax', 1, 300, 1)
+    .name('Fade Speed Max (frames)')
+    .onChange(v => {
+      updateFadeSpeeds(particles.geometry);
+    });
+  visibilityFolder.open();
 
   // Turbulence folder
   const turbFolder = gui.addFolder('Turbulence');
@@ -352,6 +388,53 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     aStart[i * 3 + 2] = r * Math.cos(ph);
   }
   geometry.setAttribute('aInstanceStart', new THREE.InstancedBufferAttribute(aStart, 3));
+  
+  // Fade system attributes
+  // Create deterministic random order using seeded random
+  const seedRandom = (seed) => {
+    let x = Math.sin(seed) * 10000;
+    return x - Math.floor(x);
+  };
+  
+  // Create particle order indices (deterministic shuffle based on position)
+  const particleOrder = new Float32Array(count);
+  const indices = Array.from({ length: count }, (_, i) => i);
+  
+  // Sort indices based on deterministic "random" value from particle position
+  indices.sort((a, b) => {
+    const randA = seedRandom(aStart[a * 3] * 12.9898 + aStart[a * 3 + 1] * 78.233 + aStart[a * 3 + 2] * 37.719);
+    const randB = seedRandom(aStart[b * 3] * 12.9898 + aStart[b * 3 + 1] * 78.233 + aStart[b * 3 + 2] * 37.719);
+    return randA - randB;
+  });
+  
+  // Store the order index for each particle
+  for (let i = 0; i < count; i++) {
+    particleOrder[indices[i]] = i / count; // Normalized position in order (0-1)
+  }
+  geometry.setAttribute('aParticleOrder', new THREE.InstancedBufferAttribute(particleOrder, 1));
+  
+  // Current opacity for each particle (starts at 1)
+  const aOpacity = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    aOpacity[i] = 1.0;
+  }
+  geometry.setAttribute('aOpacity', new THREE.InstancedBufferAttribute(aOpacity, 1));
+  
+  // Target opacity (what we're fading to)
+  const aTargetOpacity = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    aTargetOpacity[i] = 1.0;
+  }
+  geometry.setAttribute('aTargetOpacity', new THREE.InstancedBufferAttribute(aTargetOpacity, 1));
+  
+  // Fade speed for each particle (deterministic based on index)
+  const aFadeSpeed = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const t = seedRandom(i * 45.233 + 12.9898);
+    const frames = params.fadeSpeedMin + t * (params.fadeSpeedMax - params.fadeSpeedMin);
+    aFadeSpeed[i] = 1.0 / frames;
+  }
+  geometry.setAttribute('aFadeSpeed', new THREE.InstancedBufferAttribute(aFadeSpeed, 1));
 
   const uniforms = {
     uTime: { value: 0 },
@@ -363,16 +446,20 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     uEdgeFade: { value: params.edgeFade },
     uTurbulenceAmount: { value: params.turbulenceAmount },
     uTurbulenceSpeed: { value: params.turbulenceSpeed },
-    uTurbulenceScale: { value: params.turbulenceScale }
+    uTurbulenceScale: { value: params.turbulenceScale },
+    uVisiblePercentage: { value: params.visiblePercentage },
+    uDeltaTime: { value: 0 }
   };
 
   const vertexShader = `
     attribute vec2 aInstanceUV;
     attribute vec3 aInstanceStart;
     attribute vec4 aInstanceColor;
+    attribute float aOpacity;
     
     varying vec4 vColor;
     varying vec2 vUv;
+    varying float vOpacity;
 
     uniform float uTime;
     uniform float uProgress;
@@ -394,6 +481,7 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     void main(){
       vColor = aInstanceColor;
       vUv = uv;
+      vOpacity = aOpacity;
 
       // Map instance UV to image plane
       float planeAspect = uPlane.x / uPlane.y;
@@ -427,6 +515,7 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
   const fragmentShader = `
     varying vec4 vColor;
     varying vec2 vUv;
+    varying float vOpacity;
     
     uniform float uSoftness;
     uniform float uEdgeFade;
@@ -440,7 +529,7 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
       float fadeStart = mix(0.0, 0.95, uSoftness);
       float fadeEnd = mix(fadeStart + 0.05, 1.0, uEdgeFade);
       
-      float alpha = 1.0 - smoothstep(fadeStart, fadeEnd, dist);
+      float alpha = (1.0 - smoothstep(fadeStart, fadeEnd, dist)) * vOpacity;
       
       // Premultiply alpha for correct blending
       gl_FragColor = vec4(vColor.rgb * alpha, alpha);
@@ -487,4 +576,68 @@ function makeFrameHelper(planeVec2, imgAspect) {
   g.setAttribute('position', new THREE.BufferAttribute(verts, 3));
   const m = new THREE.LineBasicMaterial({ color: 0x44ff88 });
   return new THREE.LineSegments(g, m);
+}
+
+// Update which particles should be visible based on percentage
+function updateParticleTargets(geometry) {
+  const count = geometry.attributes.aTargetOpacity.count;
+  const targetOpacity = geometry.attributes.aTargetOpacity.array;
+  const particleOrder = geometry.attributes.aParticleOrder.array;
+  
+  // Set target opacity based on particle order
+  // Particles with order < visiblePercentage should be visible
+  for (let i = 0; i < count; i++) {
+    targetOpacity[i] = particleOrder[i] < params.visiblePercentage ? 1.0 : 0.0;
+  }
+  
+  geometry.attributes.aTargetOpacity.needsUpdate = true;
+}
+
+// Update fade speeds when parameters change (keeps deterministic ratio)
+function updateFadeSpeeds(geometry) {
+  const count = geometry.attributes.aFadeSpeed.count;
+  const fadeSpeed = geometry.attributes.aFadeSpeed.array;
+  
+  // Seeded random function
+  const seedRandom = (seed) => {
+    let x = Math.sin(seed) * 10000;
+    return x - Math.floor(x);
+  };
+  
+  for (let i = 0; i < count; i++) {
+    // Use deterministic random based on particle index
+    const t = seedRandom(i * 45.233 + 12.9898);
+    const frames = params.fadeSpeedMin + t * (params.fadeSpeedMax - params.fadeSpeedMin);
+    fadeSpeed[i] = 1.0 / frames;
+  }
+  
+  geometry.attributes.aFadeSpeed.needsUpdate = true;
+}
+
+// Update particle opacity every frame
+function updateParticleVisibility(geometry, deltaTime) {
+  const count = geometry.attributes.aOpacity.count;
+  const opacity = geometry.attributes.aOpacity.array;
+  const targetOpacity = geometry.attributes.aTargetOpacity.array;
+  const fadeSpeed = geometry.attributes.aFadeSpeed.array;
+  
+  // Assuming 60 FPS for frame-based fade speed
+  const frameMultiplier = deltaTime * 60;
+  
+  for (let i = 0; i < count; i++) {
+    const diff = targetOpacity[i] - opacity[i];
+    
+    if (Math.abs(diff) > 0.001) {
+      // Smooth transition towards target
+      const step = fadeSpeed[i] * frameMultiplier;
+      
+      if (diff > 0) {
+        opacity[i] = Math.min(opacity[i] + step, targetOpacity[i]);
+      } else {
+        opacity[i] = Math.max(opacity[i] - step, targetOpacity[i]);
+      }
+    }
+  }
+  
+  geometry.attributes.aOpacity.needsUpdate = true;
 }
