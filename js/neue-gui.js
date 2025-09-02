@@ -14,6 +14,8 @@ const params = {
   particleSizeMax: 0.03, // Random size max
   particleSizeTarget: 0.015, // Fixed size at target
   movePercentage: 0.0, // 0-1, percentage of particles that should move to target
+  orderingMode: 'random', // 'islands', 'random', 'radial', 'grid', 'spiral', 'horizontal', 'vertical'
+  orderingScale: 1.0, // Scale of the ordering pattern
   turbulence1Amount: 1.2,
   turbulence1Speed: 0.6,
   turbulence1Scale: 0.9,
@@ -78,6 +80,9 @@ async function init() {
 
   particles = makeInstancedParticles(data);
   scene.add(particles);
+  
+  // Store particle data for re-ordering
+  window.particleData = data;
 
   uniforms = particles.material.uniforms;
   uniforms.uPlane.value.copy(planeSizeAtZ0());
@@ -135,6 +140,20 @@ function setupGUI(frame) {
     .onChange(v => {
       uniforms.uMovePercentage.value = v;
       updateMovementTargets(particles.geometry);
+    });
+  animFolder.add(params, 'orderingMode', ['islands', 'random', 'radial', 'spiral', 'grid', 'horizontal', 'vertical'])
+    .name('Fill Pattern')
+    .onChange(v => {
+      updateParticleOrdering(particles.geometry, window.particleData);
+      updateMovementTargets(particles.geometry);
+      updateParticleTargets(particles.geometry);
+    });
+  animFolder.add(params, 'orderingScale', 0.1, 3, 0.01)
+    .name('Pattern Scale')
+    .onChange(v => {
+      updateParticleOrdering(particles.geometry, window.particleData);
+      updateMovementTargets(particles.geometry);
+      updateParticleTargets(particles.geometry);
     });
   animFolder.add(params, 'moveSpeedMin', 1, 300, 1)
     .name('Move Speed Min (frames)')
@@ -471,22 +490,167 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     return x - Math.floor(x);
   };
   
-  // Create particle order indices (deterministic shuffle based on position)
-  const particleOrder = new Float32Array(count);
+  // Create TWO separate particle orders - one for visibility, one for movement
+  const particleOrderVisibility = new Float32Array(count);
+  const particleOrderMovement = new Float32Array(count);
   const indices = Array.from({ length: count }, (_, i) => i);
   
-  // Sort indices based on deterministic "random" value from particle position
-  indices.sort((a, b) => {
-    const randA = seedRandom(aStart[a * 3] * 12.9898 + aStart[a * 3 + 1] * 78.233 + aStart[a * 3 + 2] * 37.719);
-    const randB = seedRandom(aStart[b * 3] * 12.9898 + aStart[b * 3 + 1] * 78.233 + aStart[b * 3 + 2] * 37.719);
-    return randA - randB;
+  // Function to calculate order value based on UV position
+  const getOrderValue = (u, v, mode, scale) => {
+    const x = (u - 0.5) * 2.0; // Convert to -1 to 1
+    const y = (v - 0.5) * 2.0;
+    
+    switch(mode) {
+      case 'radial':
+        // Distance from center, creating concentric circles
+        return Math.sqrt(x * x + y * y) * scale;
+        
+      case 'spiral':
+        // Spiral pattern from center
+        const angle = Math.atan2(y, x);
+        const dist = Math.sqrt(x * x + y * y);
+        return (dist * scale + (angle + Math.PI) / (2 * Math.PI)) % 1;
+        
+      case 'grid':
+        // Grid-based zones
+        const gridSize = Math.floor(5 * scale);
+        const gx = Math.floor((u * gridSize));
+        const gy = Math.floor((v * gridSize));
+        // Add small random offset within grid cell for variety
+        return (gy * gridSize + gx + seedRandom(gx * 17.23 + gy * 31.17) * 0.1) / (gridSize * gridSize);
+        
+      case 'horizontal':
+        // Left to right waves
+        return (u + Math.sin(v * Math.PI * 2 * scale) * 0.1);
+        
+      case 'vertical':
+        // Top to bottom waves
+        return (v + Math.sin(u * Math.PI * 2 * scale) * 0.1);
+        
+      case 'islands':
+        // Voronoi-based organic blob zones with very heavy distortion
+        const numCells = Math.floor(4 + 4 * scale); // 4-8 cells
+        const cells = [];
+        
+        // Generate Voronoi cell centers
+        for (let i = 0; i < numCells; i++) {
+          cells.push({
+            x: (seedRandom(i * 23.45) - 0.5) * 2,
+            y: (seedRandom(i * 34.56 + 100) - 0.5) * 2,
+            // Random fill priority - NOT based on position
+            priority: seedRandom(i * 789.01)
+          });
+        }
+        
+        // Sort cells by priority so they fill in random order
+        cells.sort((a, b) => a.priority - b.priority);
+        
+        // Create smooth noise function for organic distortion
+        const smoothNoise = (px, py, seed) => {
+          const ix = Math.floor(px);
+          const iy = Math.floor(py);
+          const fx = px - ix;
+          const fy = py - iy;
+          
+          // Smooth interpolation curves
+          const sx = fx * fx * (3 - 2 * fx);
+          const sy = fy * fy * (3 - 2 * fy);
+          
+          const n00 = seedRandom(ix * 12.9898 + iy * 78.233 + seed);
+          const n10 = seedRandom((ix + 1) * 12.9898 + iy * 78.233 + seed);
+          const n01 = seedRandom(ix * 12.9898 + (iy + 1) * 78.233 + seed);
+          const n11 = seedRandom((ix + 1) * 12.9898 + (iy + 1) * 78.233 + seed);
+          
+          const nx0 = n00 * (1 - sx) + n10 * sx;
+          const nx1 = n01 * (1 - sx) + n11 * sx;
+          
+          return nx0 * (1 - sy) + nx1 * sy;
+        };
+        
+        // Multi-scale smooth noise for very organic distortion
+        const distortionAmount = 0.8; // Much stronger distortion
+        
+        // Multiple octaves of smooth noise at different scales
+        const noise1 = smoothNoise(u * 5, v * 5, 123.45) - 0.5;
+        const noise2 = smoothNoise(u * 10, v * 10, 234.56) - 0.5;
+        const noise3 = smoothNoise(u * 20, v * 20, 345.67) - 0.5;
+        const noise4 = smoothNoise(u * 40, v * 40, 456.78) - 0.5;
+        
+        // Combine noise octaves with decreasing amplitude
+        const noiseX = noise1 * 0.5 + noise2 * 0.25 + noise3 * 0.125 + noise4 * 0.0625;
+        const noiseY = smoothNoise(u * 5, v * 5, 567.89) * 0.5 - 0.25 +
+                       smoothNoise(u * 10, v * 10, 678.90) * 0.25 - 0.125 +
+                       smoothNoise(u * 20, v * 20, 789.01) * 0.125 - 0.0625;
+        
+        // Apply heavy distortion to break up angular edges
+        const distortedX = x + noiseX * distortionAmount;
+        const distortedY = y + noiseY * distortionAmount;
+        
+        // Find closest cell using heavily distorted position
+        let closestCell = 0;
+        let minDist = 999;
+        let secondMinDist = 999;
+        
+        for (let i = 0; i < numCells; i++) {
+          const dx = distortedX - cells[i].x;
+          const dy = distortedY - cells[i].y;
+          
+          // Add additional radial noise distortion per cell
+          const angle = Math.atan2(dy, dx);
+          const radialNoise = smoothNoise(angle * 2, i * 10, i * 123.45) * 0.4;
+          
+          const dist = Math.sqrt(dx * dx + dy * dy) * (1.0 + radialNoise);
+          
+          if (dist < minDist) {
+            secondMinDist = minDist;
+            minDist = dist;
+            closestCell = i;
+          } else if (dist < secondMinDist) {
+            secondMinDist = dist;
+          }
+        }
+        
+        // Final order: cell index determines fill order
+        const cellOrder = closestCell / numCells;
+        
+        // Within each cell, add smooth organic variation
+        const withinCellNoise = smoothNoise(u * 30, v * 30, closestCell * 100) * 0.08;
+        
+        return cellOrder + withinCellNoise;
+        
+      case 'random':
+      default:
+        // Original random ordering
+        return seedRandom(u * 12.9898 + v * 78.233);
+    }
+  };
+  
+  // Sort indices for VISIBILITY order (using one random seed)
+  const indicesVis = [...indices];
+  indicesVis.sort((a, b) => {
+    // Use a different seed for visibility ordering
+    const orderA = seedRandom(uvs[a * 2] * 12.9898 + uvs[a * 2 + 1] * 78.233 + 1000);
+    const orderB = seedRandom(uvs[b * 2] * 12.9898 + uvs[b * 2 + 1] * 78.233 + 1000);
+    return orderA - orderB;
   });
   
-  // Store the order index for each particle
+  // Sort indices for MOVEMENT order (using different random seed)
+  const indicesMove = [...indices];
+  indicesMove.sort((a, b) => {
+    // Use a different seed for movement ordering
+    const orderA = seedRandom(uvs[a * 2] * 45.678 + uvs[a * 2 + 1] * 123.456 + 2000);
+    const orderB = seedRandom(uvs[b * 2] * 45.678 + uvs[b * 2 + 1] * 123.456 + 2000);
+    return orderA - orderB;
+  });
+  
+  // Store both order indices for each particle
   for (let i = 0; i < count; i++) {
-    particleOrder[indices[i]] = i / count; // Normalized position in order (0-1)
+    particleOrderVisibility[indicesVis[i]] = i / count; // Normalized position in visibility order
+    particleOrderMovement[indicesMove[i]] = i / count; // Normalized position in movement order
   }
-  geometry.setAttribute('aParticleOrder', new THREE.InstancedBufferAttribute(particleOrder, 1));
+  
+  geometry.setAttribute('aParticleOrderVisibility', new THREE.InstancedBufferAttribute(particleOrderVisibility, 1));
+  geometry.setAttribute('aParticleOrderMovement', new THREE.InstancedBufferAttribute(particleOrderMovement, 1));
   
   // Current opacity for each particle (starts at 1)
   const aOpacity = new Float32Array(count);
@@ -710,12 +874,12 @@ function makeFrameHelper(planeVec2, imgAspect) {
 function updateParticleTargets(geometry) {
   const count = geometry.attributes.aTargetOpacity.count;
   const targetOpacity = geometry.attributes.aTargetOpacity.array;
-  const particleOrder = geometry.attributes.aParticleOrder.array;
+  const particleOrderVisibility = geometry.attributes.aParticleOrderVisibility.array;
   
-  // Set target opacity based on particle order
+  // Set target opacity based on VISIBILITY particle order
   // Particles with order < visiblePercentage should be visible
   for (let i = 0; i < count; i++) {
-    targetOpacity[i] = particleOrder[i] < params.visiblePercentage ? 1.0 : 0.0;
+    targetOpacity[i] = particleOrderVisibility[i] < params.visiblePercentage ? 1.0 : 0.0;
   }
   
   geometry.attributes.aTargetOpacity.needsUpdate = true;
@@ -802,12 +966,12 @@ function updateParticleVisibility(geometry, deltaTime) {
 function updateMovementTargets(geometry) {
   const count = geometry.attributes.aTargetProgress.count;
   const targetProgress = geometry.attributes.aTargetProgress.array;
-  const particleOrder = geometry.attributes.aParticleOrder.array;
+  const particleOrderMovement = geometry.attributes.aParticleOrderMovement.array;
   
-  // Set target progress based on particle order
+  // Set target progress based on MOVEMENT particle order
   // Particles with order < movePercentage should move to target
   for (let i = 0; i < count; i++) {
-    targetProgress[i] = particleOrder[i] < params.movePercentage ? 1.0 : 0.0;
+    targetProgress[i] = particleOrderMovement[i] < params.movePercentage ? 1.0 : 0.0;
   }
   
   geometry.attributes.aTargetProgress.needsUpdate = true;
@@ -902,4 +1066,192 @@ function updateParticleSizes(geometry) {
   }
   
   geometry.attributes.aRandomSize.needsUpdate = true;
+}
+
+// Update particle ordering when mode or scale changes
+function updateParticleOrdering(geometry, data) {
+  if (!data || !data.uvs) return;
+  
+  const count = geometry.attributes.aParticleOrderVisibility.count;
+  const particleOrderVisibility = geometry.attributes.aParticleOrderVisibility.array;
+  const particleOrderMovement = geometry.attributes.aParticleOrderMovement.array;
+  const uvs = data.uvs;
+  const indices = Array.from({ length: count }, (_, i) => i);
+  
+  // Seeded random function
+  const seedRandom = (seed) => {
+    let x = Math.sin(seed) * 10000;
+    return x - Math.floor(x);
+  };
+  
+  // Function to calculate order value based on UV position
+  const getOrderValue = (u, v, mode, scale) => {
+    const x = (u - 0.5) * 2.0; // Convert to -1 to 1
+    const y = (v - 0.5) * 2.0;
+    
+    switch(mode) {
+      case 'radial':
+        // Distance from center, creating concentric circles
+        return Math.sqrt(x * x + y * y) * scale;
+        
+      case 'spiral':
+        // Spiral pattern from center
+        const angle = Math.atan2(y, x);
+        const dist = Math.sqrt(x * x + y * y);
+        return (dist * scale + (angle + Math.PI) / (2 * Math.PI)) % 1;
+        
+      case 'grid':
+        // Grid-based zones
+        const gridSize = Math.floor(5 * scale);
+        const gx = Math.floor((u * gridSize));
+        const gy = Math.floor((v * gridSize));
+        // Add small random offset within grid cell for variety
+        return (gy * gridSize + gx + seedRandom(gx * 17.23 + gy * 31.17) * 0.1) / (gridSize * gridSize);
+        
+      case 'horizontal':
+        // Left to right waves
+        return (u + Math.sin(v * Math.PI * 2 * scale) * 0.1);
+        
+      case 'vertical':
+        // Top to bottom waves
+        return (v + Math.sin(u * Math.PI * 2 * scale) * 0.1);
+        
+      case 'islands':
+        // Voronoi-based organic blob zones with very heavy distortion
+        const numCells = Math.floor(4 + 4 * scale); // 4-8 cells
+        const cells = [];
+        
+        // Generate Voronoi cell centers
+        for (let i = 0; i < numCells; i++) {
+          cells.push({
+            x: (seedRandom(i * 23.45) - 0.5) * 2,
+            y: (seedRandom(i * 34.56 + 100) - 0.5) * 2,
+            // Random fill priority - NOT based on position
+            priority: seedRandom(i * 789.01)
+          });
+        }
+        
+        // Sort cells by priority so they fill in random order
+        cells.sort((a, b) => a.priority - b.priority);
+        
+        // Create smooth noise function for organic distortion
+        const smoothNoise = (px, py, seed) => {
+          const ix = Math.floor(px);
+          const iy = Math.floor(py);
+          const fx = px - ix;
+          const fy = py - iy;
+          
+          // Smooth interpolation curves
+          const sx = fx * fx * (3 - 2 * fx);
+          const sy = fy * fy * (3 - 2 * fy);
+          
+          const n00 = seedRandom(ix * 12.9898 + iy * 78.233 + seed);
+          const n10 = seedRandom((ix + 1) * 12.9898 + iy * 78.233 + seed);
+          const n01 = seedRandom(ix * 12.9898 + (iy + 1) * 78.233 + seed);
+          const n11 = seedRandom((ix + 1) * 12.9898 + (iy + 1) * 78.233 + seed);
+          
+          const nx0 = n00 * (1 - sx) + n10 * sx;
+          const nx1 = n01 * (1 - sx) + n11 * sx;
+          
+          return nx0 * (1 - sy) + nx1 * sy;
+        };
+        
+        // Multi-scale smooth noise for very organic distortion
+        const distortionAmount = 0.8; // Much stronger distortion
+        
+        // Multiple octaves of smooth noise at different scales
+        const noise1 = smoothNoise(u * 5, v * 5, 123.45) - 0.5;
+        const noise2 = smoothNoise(u * 10, v * 10, 234.56) - 0.5;
+        const noise3 = smoothNoise(u * 20, v * 20, 345.67) - 0.5;
+        const noise4 = smoothNoise(u * 40, v * 40, 456.78) - 0.5;
+        
+        // Combine noise octaves with decreasing amplitude
+        const noiseX = noise1 * 0.5 + noise2 * 0.25 + noise3 * 0.125 + noise4 * 0.0625;
+        const noiseY = smoothNoise(u * 5, v * 5, 567.89) * 0.5 - 0.25 +
+                       smoothNoise(u * 10, v * 10, 678.90) * 0.25 - 0.125 +
+                       smoothNoise(u * 20, v * 20, 789.01) * 0.125 - 0.0625;
+        
+        // Apply heavy distortion to break up angular edges
+        const distortedX = x + noiseX * distortionAmount;
+        const distortedY = y + noiseY * distortionAmount;
+        
+        // Find closest cell using heavily distorted position
+        let closestCell = 0;
+        let minDist = 999;
+        let secondMinDist = 999;
+        
+        for (let i = 0; i < numCells; i++) {
+          const dx = distortedX - cells[i].x;
+          const dy = distortedY - cells[i].y;
+          
+          // Add additional radial noise distortion per cell
+          const angle = Math.atan2(dy, dx);
+          const radialNoise = smoothNoise(angle * 2, i * 10, i * 123.45) * 0.4;
+          
+          const dist = Math.sqrt(dx * dx + dy * dy) * (1.0 + radialNoise);
+          
+          if (dist < minDist) {
+            secondMinDist = minDist;
+            minDist = dist;
+            closestCell = i;
+          } else if (dist < secondMinDist) {
+            secondMinDist = dist;
+          }
+        }
+        
+        // Final order: cell index determines fill order
+        const cellOrder = closestCell / numCells;
+        
+        // Within each cell, add smooth organic variation
+        const withinCellNoise = smoothNoise(u * 30, v * 30, closestCell * 100) * 0.08;
+        
+        return cellOrder + withinCellNoise;
+        
+      case 'random':
+      default:
+        // Original random ordering
+        return seedRandom(u * 12.9898 + v * 78.233);
+    }
+  };
+  
+  // For 'random' mode, use different seeds for visibility and movement
+  if (params.orderingMode === 'random') {
+    // Sort indices for VISIBILITY order
+    const indicesVis = [...indices];
+    indicesVis.sort((a, b) => {
+      const orderA = seedRandom(uvs[a * 2] * 12.9898 + uvs[a * 2 + 1] * 78.233 + 1000);
+      const orderB = seedRandom(uvs[b * 2] * 12.9898 + uvs[b * 2 + 1] * 78.233 + 1000);
+      return orderA - orderB;
+    });
+    
+    // Sort indices for MOVEMENT order (different seed)
+    const indicesMove = [...indices];
+    indicesMove.sort((a, b) => {
+      const orderA = seedRandom(uvs[a * 2] * 45.678 + uvs[a * 2 + 1] * 123.456 + 2000);
+      const orderB = seedRandom(uvs[b * 2] * 45.678 + uvs[b * 2 + 1] * 123.456 + 2000);
+      return orderA - orderB;
+    });
+    
+    // Store both orders
+    for (let i = 0; i < count; i++) {
+      particleOrderVisibility[indicesVis[i]] = i / count;
+      particleOrderMovement[indicesMove[i]] = i / count;
+    }
+  } else {
+    // For other modes, use the same order for both (based on pattern)
+    indices.sort((a, b) => {
+      const orderA = getOrderValue(uvs[a * 2], uvs[a * 2 + 1], params.orderingMode, params.orderingScale);
+      const orderB = getOrderValue(uvs[b * 2], uvs[b * 2 + 1], params.orderingMode, params.orderingScale);
+      return orderA - orderB;
+    });
+    
+    // Use same order for both visibility and movement
+    for (let i = 0; i < count; i++) {
+      particleOrderVisibility[indices[i]] = i / count;
+      particleOrderMovement[indices[i]] = i / count;
+    }
+  }
+  
+  geometry.attributes.aParticleOrderVisibility.needsUpdate = true;
+  geometry.attributes.aParticleOrderMovement.needsUpdate = true;
 }

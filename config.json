@@ -3,6 +3,8 @@
   "particleSizeMax": 0.03,
   "particleSizeTarget": 0.015,
   "movePercentage": 0.0,
+  "orderingMode": "random",
+  "orderingScale": 1.0,
   "turbulence1Amount": 1.2,
   "turbulence1Speed": 0.6,
   "turbulence1Scale": 0.9,
