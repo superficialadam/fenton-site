@@ -8,6 +8,21 @@ const CONFIG_URL = './config.json'; // Default config file
 const canvas = document.getElementById('bg-splats');
 const statsEl = document.getElementById('stats');
 
+// Animation system
+const animationSystem = {
+  states: [
+    { params: {}, duration: 0 },    // State 0 (no duration)
+    { params: {}, duration: 2.0 },  // State 1
+    { params: {}, duration: 2.0 },  // State 2
+    { params: {}, duration: 2.0 },  // State 3
+    { params: {}, duration: 2.0 }   // State 4
+  ],
+  currentState: 0,
+  isPlaying: false,
+  playStartTime: 0,
+  currentPlayTime: 0
+};
+
 // Default parameters
 const params = {
   particleSizeMin: 0.01, // Random size min
@@ -47,6 +62,9 @@ init().catch(err => {
 async function init() {
   // Try to load config file
   await loadConfig(CONFIG_URL);
+  
+  // Try to load animation file
+  await loadAnimationFile();
 
   // Renderer / Camera / Scene
   renderer = new THREE.WebGLRenderer({
@@ -113,6 +131,9 @@ async function init() {
     
     uniforms.uTime.value = currentTime;
     uniforms.uDeltaTime.value = deltaTime;
+    
+    // Update animation system
+    updateAnimation();
     
     // Update particle visibility and movement
     updateParticleVisibility(particles.geometry, deltaTime);
@@ -308,6 +329,62 @@ function setupGUI(frame) {
   configFolder.add({ 
     export: () => exportConfig() 
   }, 'export').name('Export JSON');
+  
+  // Animation System folder
+  const animSystemFolder = gui.addFolder('Animation System');
+  
+  // State selector
+  animSystemFolder.add(animationSystem, 'currentState', {
+    'State 0 (Start)': 0,
+    'State 1': 1,
+    'State 2': 2,
+    'State 3': 3,
+    'State 4 (End)': 4
+  }).name('Current State').onChange(v => {
+    loadAnimationState(parseInt(v));
+  });
+  
+  // Duration control (not shown for state 0)
+  const durationControl = animSystemFolder.add(
+    { duration: animationSystem.states[animationSystem.currentState].duration },
+    'duration', 0.1, 10, 0.1
+  ).name('Duration (seconds)').onChange(v => {
+    if (animationSystem.currentState > 0) {
+      animationSystem.states[animationSystem.currentState].duration = v;
+    }
+  });
+  
+  // Store current params to selected state
+  animSystemFolder.add({
+    store: () => storeAnimationState()
+  }, 'store').name('Store Current Params');
+  
+  // Play button
+  animSystemFolder.add({
+    play: () => startAnimation()
+  }, 'play').name('▶ Play');
+  
+  // Stop button
+  animSystemFolder.add({
+    stop: () => stopAnimation()
+  }, 'stop').name('■ Stop');
+  
+  // Save/Load animation
+  animSystemFolder.add({
+    save: () => saveAnimation(true)  // Force download
+  }, 'save').name('Save Animation (Download)');
+  
+  animSystemFolder.add({
+    load: () => loadAnimationFile()
+  }, 'load').name('Load Animation');
+  
+  // Progress display
+  animSystemFolder.add({ progress: 0 }, 'progress', 0, 1)
+    .name('Playback Progress')
+    .listen()
+    .disable();
+  
+  animSystemFolder.open();
 
   // Apply initial values
   uniforms.uParticleSizeTarget.value = params.particleSizeTarget;
@@ -1066,6 +1143,350 @@ function updateParticleSizes(geometry) {
   }
   
   geometry.attributes.aRandomSize.needsUpdate = true;
+}
+
+// Animation System Functions
+
+// Store current params to selected state
+function storeAnimationState() {
+  const state = animationSystem.currentState;
+  animationSystem.states[state].params = JSON.parse(JSON.stringify(params));
+  console.log(`Stored current params to state ${state}`);
+  
+  // Save to localStorage only (don't download every time)
+  const animData = {
+    states: animationSystem.states,
+    version: 1
+  };
+  localStorage.setItem('particleAnimation', JSON.stringify(animData, null, 2));
+}
+
+// Load params from selected state
+function loadAnimationState(stateIndex) {
+  const state = animationSystem.states[stateIndex];
+  if (state.params && Object.keys(state.params).length > 0) {
+    Object.assign(params, state.params);
+    
+    // Update all uniforms and controls
+    applyAllParams();
+    
+    // Refresh GUI to show new values
+    gui.destroy();
+    setupGUI(window.frame);
+    
+    console.log(`Loaded state ${stateIndex}`);
+  } else {
+    console.log(`State ${stateIndex} is empty`);
+  }
+}
+
+// Apply all params to uniforms and geometry
+function applyAllParams() {
+  if (!uniforms) return;
+  
+  // Apply uniforms
+  uniforms.uParticleSizeTarget.value = params.particleSizeTarget;
+  uniforms.uSoftness.value = params.softness;
+  uniforms.uEdgeFade.value = params.edgeFade;
+  uniforms.uTurbulence1Amount.value = params.turbulence1Amount;
+  uniforms.uTurbulence1Speed.value = params.turbulence1Speed;
+  uniforms.uTurbulence1Scale.value = params.turbulence1Scale;
+  uniforms.uTurbulence1Evolution.value = params.turbulence1Evolution;
+  uniforms.uTurbulence2Amount.value = params.turbulence2Amount;
+  uniforms.uTurbulence2Speed.value = params.turbulence2Speed;
+  uniforms.uTurbulence2Scale.value = params.turbulence2Scale;
+  uniforms.uTurbulence2Evolution.value = params.turbulence2Evolution;
+  uniforms.uVisiblePercentage.value = params.visiblePercentage;
+  uniforms.uMovePercentage.value = params.movePercentage;
+  
+  // Apply other params
+  renderer.setClearColor(params.backgroundColor);
+  
+  // Update blend mode
+  switch(params.blendMode) {
+    case 'additive':
+      particles.material.blending = THREE.AdditiveBlending;
+      break;
+    case 'screen':
+      particles.material.blending = THREE.CustomBlending;
+      particles.material.blendEquation = THREE.AddEquation;
+      particles.material.blendSrc = THREE.OneFactor;
+      particles.material.blendDst = THREE.OneFactor;
+      break;
+    case 'normal':
+      particles.material.blending = THREE.NormalBlending;
+      break;
+    default: // premultiplied
+      particles.material.blending = THREE.CustomBlending;
+      particles.material.blendEquation = THREE.AddEquation;
+      particles.material.blendSrc = THREE.OneFactor;
+      particles.material.blendDst = THREE.OneMinusSrcAlphaFactor;
+  }
+  particles.material.needsUpdate = true;
+  
+  // Update frame visibility
+  if (window.frame) {
+    window.frame.visible = params.showFrame;
+  }
+  
+  // Update particle targets
+  updateParticleTargets(particles.geometry);
+  updateMovementTargets(particles.geometry);
+  updateParticleSizes(particles.geometry);
+  updateMoveSpeeds(particles.geometry);
+  updateFadeSpeeds(particles.geometry);
+}
+
+// Start animation playback
+function startAnimation() {
+  // Check if we have states with params
+  let hasStates = false;
+  for (let i = 0; i < 5; i++) {
+    if (animationSystem.states[i].params && Object.keys(animationSystem.states[i].params).length > 0) {
+      hasStates = true;
+      break;
+    }
+  }
+  
+  if (!hasStates) {
+    alert('Please store parameters in states before playing animation');
+    return;
+  }
+  
+  // Start from state 0
+  if (animationSystem.states[0].params && Object.keys(animationSystem.states[0].params).length > 0) {
+    loadAnimationState(0);
+  }
+  
+  animationSystem.isPlaying = true;
+  animationSystem.playStartTime = performance.now() / 1000;
+  animationSystem.currentPlayTime = 0;
+  console.log('Animation started');
+}
+
+// Stop animation playback and return to state 0
+function stopAnimation() {
+  animationSystem.isPlaying = false;
+  animationSystem.currentPlayTime = 0;
+  
+  // Return to state 0
+  if (animationSystem.states[0].params && Object.keys(animationSystem.states[0].params).length > 0) {
+    loadAnimationState(0);
+  }
+  
+  // Update progress display to 0
+  const progressControl = gui.controllers.find(c => c.property === 'progress');
+  if (progressControl) {
+    progressControl.object.progress = 0;
+  }
+  
+  console.log('Animation stopped - returned to state 0');
+}
+
+// Update animation (call this in render loop)
+function updateAnimation() {
+  if (!animationSystem.isPlaying) return;
+  
+  const currentTime = performance.now() / 1000;
+  const elapsed = currentTime - animationSystem.playStartTime;
+  
+  // Calculate total duration
+  let totalDuration = 0;
+  for (let i = 1; i < 5; i++) {
+    totalDuration += animationSystem.states[i].duration;
+  }
+  
+  // Check if animation is complete
+  if (elapsed >= totalDuration) {
+    // Animation complete - stop and stay at state 4
+    animationSystem.isPlaying = false;
+    animationSystem.currentPlayTime = totalDuration;
+    
+    // Load final state
+    if (animationSystem.states[4].params && Object.keys(animationSystem.states[4].params).length > 0) {
+      loadAnimationState(4);
+    }
+    
+    // Update progress display to 100%
+    const progressControl = gui.controllers.find(c => c.property === 'progress');
+    if (progressControl) {
+      progressControl.object.progress = 1;
+    }
+    
+    console.log('Animation complete');
+    return;
+  }
+  
+  animationSystem.currentPlayTime = elapsed;
+  
+  // Find which states we're between
+  let accumulatedTime = 0;
+  let fromState = 0;
+  let toState = 1;
+  let stateProgress = 0;
+  
+  for (let i = 1; i < 5; i++) {
+    const stateDuration = animationSystem.states[i].duration;
+    
+    if (animationSystem.currentPlayTime < accumulatedTime + stateDuration) {
+      fromState = i - 1;
+      toState = i;
+      stateProgress = (animationSystem.currentPlayTime - accumulatedTime) / stateDuration;
+      break;
+    }
+    
+    accumulatedTime += stateDuration;
+    
+    // If we're past state 3, interpolate from 3 to 4
+    if (i === 4 && animationSystem.currentPlayTime >= accumulatedTime) {
+      fromState = 3;
+      toState = 4;
+      stateProgress = 1;
+    }
+  }
+  
+  // Interpolate between states
+  interpolateStates(fromState, toState, stateProgress);
+  
+  // Update progress display
+  const progressControl = gui.controllers.find(c => c.property === 'progress');
+  if (progressControl) {
+    progressControl.object.progress = animationSystem.currentPlayTime / totalDuration;
+  }
+}
+
+// Interpolate between two states
+function interpolateStates(fromIndex, toIndex, t) {
+  const from = animationSystem.states[fromIndex].params;
+  const to = animationSystem.states[toIndex].params;
+  
+  if (!from || !to || Object.keys(from).length === 0 || Object.keys(to).length === 0) return;
+  
+  // Use smoothstep for smoother transitions
+  const smoothT = t * t * (3 - 2 * t);
+  
+  // Interpolate numeric values
+  for (const key in from) {
+    if (typeof from[key] === 'number' && typeof to[key] === 'number') {
+      params[key] = from[key] + (to[key] - from[key]) * smoothT;
+    } else if (key === 'backgroundColor') {
+      // Interpolate colors
+      params[key] = interpolateColor(from[key], to[key], smoothT);
+    } else {
+      // Non-numeric values use from state until t > 0.5
+      params[key] = smoothT < 0.5 ? from[key] : to[key];
+    }
+  }
+  
+  // Apply interpolated params
+  applyAllParams();
+}
+
+// Interpolate between two hex colors
+function interpolateColor(color1, color2, t) {
+  const c1 = parseInt(color1.slice(1), 16);
+  const c2 = parseInt(color2.slice(1), 16);
+  
+  const r1 = (c1 >> 16) & 0xff;
+  const g1 = (c1 >> 8) & 0xff;
+  const b1 = c1 & 0xff;
+  
+  const r2 = (c2 >> 16) & 0xff;
+  const g2 = (c2 >> 8) & 0xff;
+  const b2 = c2 & 0xff;
+  
+  const r = Math.round(r1 + (r2 - r1) * t);
+  const g = Math.round(g1 + (g2 - g1) * t);
+  const b = Math.round(b1 + (b2 - b1) * t);
+  
+  return '#' + ((r << 16) | (g << 8) | b).toString(16).padStart(6, '0');
+}
+
+// Save animation to file
+let saveAttempted = false;
+async function saveAnimation(forceDownload = false) {
+  const animData = {
+    states: animationSystem.states,
+    version: 1
+  };
+  
+  const json = JSON.stringify(animData, null, 2);
+  
+  // Always save to localStorage
+  localStorage.setItem('particleAnimation', json);
+  console.log('Animation saved to localStorage');
+  
+  // If force download or we know server doesn't support PUT
+  if (forceDownload || saveAttempted) {
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'anim.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    console.log('Animation downloaded as anim.json');
+    return;
+  }
+  
+  // Try server save only once
+  if (!saveAttempted) {
+    saveAttempted = true;
+    try {
+      const response = await fetch('./anim.json', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: json
+      });
+      
+      if (!response.ok) {
+        throw new Error('Server does not support PUT');
+      }
+      
+      console.log('Animation saved to server');
+    } catch (e) {
+      // Server doesn't support PUT, will use localStorage/download from now on
+      console.log('Server save not available, using localStorage. Use "Save Animation" button to download file.');
+    }
+  }
+}
+
+// Load animation from file
+async function loadAnimationFile() {
+  // First try localStorage
+  const stored = localStorage.getItem('particleAnimation');
+  if (stored) {
+    try {
+      const animData = JSON.parse(stored);
+      animationSystem.states = animData.states;
+      console.log('Animation loaded from localStorage');
+      
+      // Load first state
+      if (animationSystem.states[0].params && Object.keys(animationSystem.states[0].params).length > 0) {
+        loadAnimationState(0);
+      }
+      return;
+    } catch (e) {
+      console.error('Failed to parse stored animation:', e);
+    }
+  }
+  
+  // Try to load from file
+  try {
+    const response = await fetch('./anim.json');
+    if (response.ok) {
+      const animData = await response.json();
+      animationSystem.states = animData.states;
+      console.log('Animation loaded from anim.json');
+      
+      // Load first state
+      if (animationSystem.states[0].params && Object.keys(animationSystem.states[0].params).length > 0) {
+        loadAnimationState(0);
+      }
+    }
+  } catch (e) {
+    console.log('No animation file found');
+  }
 }
 
 // Update particle ordering when mode or scale changes

@@ -1,0 +1,25 @@
+{
+  "states": [
+    {
+      "params": {},
+      "duration": 0
+    },
+    {
+      "params": {},
+      "duration": 2.0
+    },
+    {
+      "params": {},
+      "duration": 2.0
+    },
+    {
+      "params": {},
+      "duration": 2.0
+    },
+    {
+      "params": {},
+      "duration": 2.0
+    }
+  ],
+  "version": 1
+}
