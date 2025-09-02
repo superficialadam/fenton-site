@@ -49,10 +49,20 @@ const params = {
   backgroundColor: '#111111',
   blendMode: 'premultiplied',
   depthWrite: false,
-  showFrame: true
+  showFrame: true,
+  
+  // Scroll camera controls
+  cameraOffsetY: 0.0,
+  scrollMultiplier: 0.01,
+  scrollDamping: 0.05
 };
 
 let renderer, scene, camera, particles, uniforms, clock, gui, guiNeedsUpdate = false;
+
+// Scroll tracking variables
+let scrollY = 0;
+let targetCameraY = 0;
+let currentCameraY = 0;
 
 init().catch(err => {
   console.error('Init error:', err);
@@ -79,7 +89,8 @@ async function init() {
 
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
-  camera.position.set(0, 0, 6);
+  camera.position.set(0, params.cameraOffsetY, 6);
+  currentCameraY = params.cameraOffsetY;
 
   // Expose for DevTools
   Object.assign(window, { scene, camera, renderer });
@@ -121,6 +132,9 @@ async function init() {
   // Expose for DevTools
   window.particles = particles;
 
+  // Setup scroll listener
+  setupScrollListener();
+
   // Animate
   clock = new THREE.Clock();
   let lastTime = 0;
@@ -131,6 +145,9 @@ async function init() {
     
     uniforms.uTime.value = currentTime;
     uniforms.uDeltaTime.value = deltaTime;
+    
+    // Update scroll-based camera movement
+    updateScrollCamera(deltaTime);
     
     // Update animation system
     updateAnimation();
@@ -145,6 +162,25 @@ async function init() {
   // Resize
   window.addEventListener('resize', onResize);
   console.log('Init complete. Particles:', data.count);
+}
+
+// Setup scroll listener
+function setupScrollListener() {
+  const updateScroll = () => {
+    scrollY = window.scrollY;
+    // Inverted scroll: negative scroll value moves camera up
+    targetCameraY = params.cameraOffsetY - (scrollY * params.scrollMultiplier);
+  };
+
+  window.addEventListener('scroll', updateScroll, { passive: true });
+  updateScroll(); // Initialize
+}
+
+// Update camera position with damping
+function updateScrollCamera(deltaTime) {
+  const diff = targetCameraY - currentCameraY;
+  currentCameraY += diff * params.scrollDamping;
+  camera.position.y = currentCameraY;
 }
 
 function setupGUI(frame) {
@@ -329,6 +365,24 @@ function setupGUI(frame) {
   configFolder.add({ 
     export: () => exportConfig() 
   }, 'export').name('Export JSON');
+  
+  // Camera & Scroll folder
+  const cameraFolder = gui.addFolder('Camera & Scroll');
+  cameraFolder.add(params, 'cameraOffsetY', -10, 10, 0.1)
+    .name('Camera Y Offset')
+    .onChange(v => {
+      // Update target position immediately
+      targetCameraY = v - (scrollY * params.scrollMultiplier);
+    });
+  cameraFolder.add(params, 'scrollMultiplier', 0.001, 0.1, 0.001)
+    .name('Scroll Multiplier')
+    .onChange(v => {
+      // Recalculate target position with new multiplier
+      targetCameraY = params.cameraOffsetY - (scrollY * v);
+    });
+  cameraFolder.add(params, 'scrollDamping', 0.01, 0.2, 0.01)
+    .name('Scroll Damping');
+  cameraFolder.open();
   
   // Animation System folder
   const animSystemFolder = gui.addFolder('Animation System');
