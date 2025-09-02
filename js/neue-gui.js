@@ -10,11 +10,18 @@ const statsEl = document.getElementById('stats');
 
 // Default parameters
 const params = {
-  particleSize: 0.02,
+  particleSizeMin: 0.01, // Random size min
+  particleSizeMax: 0.03, // Random size max
+  particleSizeTarget: 0.015, // Fixed size at target
   movePercentage: 0.0, // 0-1, percentage of particles that should move to target
-  turbulenceAmount: 1.2,
-  turbulenceSpeed: 0.6,
-  turbulenceScale: 0.9,
+  turbulence1Amount: 1.2,
+  turbulence1Speed: 0.6,
+  turbulence1Scale: 0.9,
+  turbulence1Evolution: 0.3, // Speed of moving through noise
+  turbulence2Amount: 0.5,
+  turbulence2Speed: 0.3,
+  turbulence2Scale: 2.0,
+  turbulence2Evolution: 0.2,
   softness: 0.2, // 0 = very soft, 1 = hard edge
   edgeFade: 0.5, // Controls fade range
   visiblePercentage: 1.0, // 0-1, percentage of particles that should be visible
@@ -143,9 +150,21 @@ function setupGUI(frame) {
 
   // Particles folder
   const particleFolder = gui.addFolder('Particles');
-  particleFolder.add(params, 'particleSize', 0.001, 0.1, 0.001).onChange(v => {
-    uniforms.uParticleSize.value = v;
-  });
+  particleFolder.add(params, 'particleSizeMin', 0.001, 0.3, 0.001)
+    .name('Random Size Min')
+    .onChange(v => {
+      updateParticleSizes(particles.geometry);
+    });
+  particleFolder.add(params, 'particleSizeMax', 0.001, 0.3, 0.001)
+    .name('Random Size Max')
+    .onChange(v => {
+      updateParticleSizes(particles.geometry);
+    });
+  particleFolder.add(params, 'particleSizeTarget', 0.001, 0.3, 0.001)
+    .name('Target Size')
+    .onChange(v => {
+      uniforms.uParticleSizeTarget.value = v;
+    });
   particleFolder.add(params, 'softness', 0, 1, 0.01)
     .name('Softness (0=soft, 1=hard)')
     .onChange(v => {
@@ -178,18 +197,53 @@ function setupGUI(frame) {
     });
   visibilityFolder.open();
 
-  // Turbulence folder
-  const turbFolder = gui.addFolder('Turbulence');
-  turbFolder.add(params, 'turbulenceAmount', 0, 3, 0.01).onChange(v => {
-    uniforms.uTurbulenceAmount.value = v;
-  });
-  turbFolder.add(params, 'turbulenceSpeed', 0, 2, 0.01).onChange(v => {
-    uniforms.uTurbulenceSpeed.value = v;
-  });
-  turbFolder.add(params, 'turbulenceScale', 0.1, 2, 0.01).onChange(v => {
-    uniforms.uTurbulenceScale.value = v;
-  });
-  turbFolder.open();
+  // Turbulence 1 folder
+  const turb1Folder = gui.addFolder('Turbulence 1');
+  turb1Folder.add(params, 'turbulence1Amount', 0, 5, 0.01)
+    .name('Amount')
+    .onChange(v => {
+      uniforms.uTurbulence1Amount.value = v;
+    });
+  turb1Folder.add(params, 'turbulence1Speed', 0, 2, 0.01)
+    .name('Speed')
+    .onChange(v => {
+      uniforms.uTurbulence1Speed.value = v;
+    });
+  turb1Folder.add(params, 'turbulence1Scale', 0.1, 5, 0.01)
+    .name('Scale')
+    .onChange(v => {
+      uniforms.uTurbulence1Scale.value = v;
+    });
+  turb1Folder.add(params, 'turbulence1Evolution', 0, 2, 0.01)
+    .name('Evolution')
+    .onChange(v => {
+      uniforms.uTurbulence1Evolution.value = v;
+    });
+  turb1Folder.open();
+  
+  // Turbulence 2 folder
+  const turb2Folder = gui.addFolder('Turbulence 2');
+  turb2Folder.add(params, 'turbulence2Amount', 0, 5, 0.01)
+    .name('Amount')
+    .onChange(v => {
+      uniforms.uTurbulence2Amount.value = v;
+    });
+  turb2Folder.add(params, 'turbulence2Speed', 0, 2, 0.01)
+    .name('Speed')
+    .onChange(v => {
+      uniforms.uTurbulence2Speed.value = v;
+    });
+  turb2Folder.add(params, 'turbulence2Scale', 0.1, 5, 0.01)
+    .name('Scale')
+    .onChange(v => {
+      uniforms.uTurbulence2Scale.value = v;
+    });
+  turb2Folder.add(params, 'turbulence2Evolution', 0, 2, 0.01)
+    .name('Evolution')
+    .onChange(v => {
+      uniforms.uTurbulence2Evolution.value = v;
+    });
+  turb2Folder.open();
 
   // Rendering folder
   const renderFolder = gui.addFolder('Rendering');
@@ -237,12 +291,17 @@ function setupGUI(frame) {
   }, 'export').name('Export JSON');
 
   // Apply initial values
-  uniforms.uParticleSize.value = params.particleSize;
+  uniforms.uParticleSizeTarget.value = params.particleSizeTarget;
   uniforms.uSoftness.value = params.softness;
   uniforms.uEdgeFade.value = params.edgeFade;
-  uniforms.uTurbulenceAmount.value = params.turbulenceAmount;
-  uniforms.uTurbulenceSpeed.value = params.turbulenceSpeed;
-  uniforms.uTurbulenceScale.value = params.turbulenceScale;
+  uniforms.uTurbulence1Amount.value = params.turbulence1Amount;
+  uniforms.uTurbulence1Speed.value = params.turbulence1Speed;
+  uniforms.uTurbulence1Scale.value = params.turbulence1Scale;
+  uniforms.uTurbulence1Evolution.value = params.turbulence1Evolution;
+  uniforms.uTurbulence2Amount.value = params.turbulence2Amount;
+  uniforms.uTurbulence2Speed.value = params.turbulence2Speed;
+  uniforms.uTurbulence2Scale.value = params.turbulence2Scale;
+  uniforms.uTurbulence2Evolution.value = params.turbulence2Evolution;
 }
 
 function saveConfig() {
@@ -475,17 +534,30 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     aMoveSpeed[i] = 1.0 / frames;
   }
   geometry.setAttribute('aMoveSpeed', new THREE.InstancedBufferAttribute(aMoveSpeed, 1));
+  
+  // Random particle sizes (deterministic based on index)
+  const aRandomSize = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const t = seedRandom(i * 89.123 + 45.678);
+    aRandomSize[i] = params.particleSizeMin + t * (params.particleSizeMax - params.particleSizeMin);
+  }
+  geometry.setAttribute('aRandomSize', new THREE.InstancedBufferAttribute(aRandomSize, 1));
 
   const uniforms = {
     uTime: { value: 0 },
     uPlane: { value: new THREE.Vector2(1, 1) },
     uImgAspect: { value: wCells / hCells },
-    uParticleSize: { value: params.particleSize },
+    uParticleSizeTarget: { value: params.particleSizeTarget },
     uSoftness: { value: params.softness },
     uEdgeFade: { value: params.edgeFade },
-    uTurbulenceAmount: { value: params.turbulenceAmount },
-    uTurbulenceSpeed: { value: params.turbulenceSpeed },
-    uTurbulenceScale: { value: params.turbulenceScale },
+    uTurbulence1Amount: { value: params.turbulence1Amount },
+    uTurbulence1Speed: { value: params.turbulence1Speed },
+    uTurbulence1Scale: { value: params.turbulence1Scale },
+    uTurbulence1Evolution: { value: params.turbulence1Evolution },
+    uTurbulence2Amount: { value: params.turbulence2Amount },
+    uTurbulence2Speed: { value: params.turbulence2Speed },
+    uTurbulence2Scale: { value: params.turbulence2Scale },
+    uTurbulence2Evolution: { value: params.turbulence2Evolution },
     uVisiblePercentage: { value: params.visiblePercentage },
     uMovePercentage: { value: params.movePercentage },
     uDeltaTime: { value: 0 }
@@ -497,6 +569,7 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     attribute vec4 aInstanceColor;
     attribute float aOpacity;
     attribute float aProgress;
+    attribute float aRandomSize;
     
     varying vec4 vColor;
     varying vec2 vUv;
@@ -505,10 +578,15 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     uniform float uTime;
     uniform float uImgAspect;
     uniform vec2 uPlane;
-    uniform float uParticleSize;
-    uniform float uTurbulenceAmount;
-    uniform float uTurbulenceSpeed;
-    uniform float uTurbulenceScale;
+    uniform float uParticleSizeTarget;
+    uniform float uTurbulence1Amount;
+    uniform float uTurbulence1Speed;
+    uniform float uTurbulence1Scale;
+    uniform float uTurbulence1Evolution;
+    uniform float uTurbulence2Amount;
+    uniform float uTurbulence2Speed;
+    uniform float uTurbulence2Scale;
+    uniform float uTurbulence2Evolution;
 
     vec3 n3(vec3 p){
       return vec3(
@@ -535,18 +613,28 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
       
       vec3 target = vec3(p * 0.5 * uPlane, 0.0);
 
-      // Animated start position with controllable turbulence
+      // Two layers of turbulence with evolution
       vec3 start = aInstanceStart;
-      vec3 wobble = n3(start * uTurbulenceScale + uTime * uTurbulenceSpeed);
-      vec3 turbulent = start + wobble * uTurbulenceAmount;
+      
+      // First turbulence layer - evolves through noise space
+      vec3 noiseCoord1 = start * uTurbulence1Scale + vec3(0.0, 0.0, uTime * uTurbulence1Evolution);
+      vec3 wobble1 = n3(noiseCoord1 + uTime * uTurbulence1Speed) * uTurbulence1Amount;
+      
+      // Second turbulence layer - different scale and evolution
+      vec3 noiseCoord2 = start * uTurbulence2Scale + vec3(0.0, 0.0, uTime * uTurbulence2Evolution);
+      vec3 wobble2 = n3(noiseCoord2 * 1.7 + uTime * uTurbulence2Speed + 100.0) * uTurbulence2Amount;
+      
+      vec3 turbulent = start + wobble1 + wobble2;
 
-      // Use per-particle progress for smooth individual transitions
-      float t = smoothstep(0.0, 1.0, aProgress);
-      vec3 instancePos = mix(turbulent, target, t);
+      // Use per-particle progress (already smoothstepped in JavaScript)
+      vec3 instancePos = mix(turbulent, target, aProgress);
+
+      // Interpolate particle size based on progress
+      float particleSize = mix(aRandomSize, uParticleSizeTarget, aProgress);
 
       // Billboard the particle to face camera
       vec4 mvPosition = modelViewMatrix * vec4(instancePos, 1.0);
-      mvPosition.xyz += position * uParticleSize;
+      mvPosition.xyz += position * particleSize;
       
       gl_Position = projectionMatrix * mvPosition;
     }
@@ -654,7 +742,13 @@ function updateFadeSpeeds(geometry) {
   geometry.attributes.aFadeSpeed.needsUpdate = true;
 }
 
-// Update particle opacity every frame
+// Smoothstep function for S-curve interpolation
+function smoothstep(edge0, edge1, x) {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+// Update particle opacity every frame with S-curve
 function updateParticleVisibility(geometry, deltaTime) {
   const count = geometry.attributes.aOpacity.count;
   const opacity = geometry.attributes.aOpacity.array;
@@ -664,18 +758,40 @@ function updateParticleVisibility(geometry, deltaTime) {
   // Assuming 60 FPS for frame-based fade speed
   const frameMultiplier = deltaTime * 60;
   
+  // Store internal progress for S-curve (would be better as attribute but minimizing changes)
+  if (!geometry.userData.fadeProgress) {
+    geometry.userData.fadeProgress = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      geometry.userData.fadeProgress[i] = opacity[i]; // Initialize with current opacity
+    }
+  }
+  const fadeProgress = geometry.userData.fadeProgress;
+  
   for (let i = 0; i < count; i++) {
-    const diff = targetOpacity[i] - opacity[i];
+    const target = targetOpacity[i];
+    const current = opacity[i];
+    const diff = target - current;
     
     if (Math.abs(diff) > 0.001) {
-      // Smooth transition towards target
+      // Update linear progress
       const step = fadeSpeed[i] * frameMultiplier;
       
       if (diff > 0) {
-        opacity[i] = Math.min(opacity[i] + step, targetOpacity[i]);
+        fadeProgress[i] = Math.min(fadeProgress[i] + step, 1.0);
       } else {
-        opacity[i] = Math.max(opacity[i] - step, targetOpacity[i]);
+        fadeProgress[i] = Math.max(fadeProgress[i] - step, 0.0);
       }
+      
+      // Apply S-curve to the progress
+      if (target > 0.5) {
+        // Fading in: use smoothstep from 0 to 1
+        opacity[i] = smoothstep(0, 1, fadeProgress[i]);
+      } else {
+        // Fading out: use smoothstep from 1 to 0
+        opacity[i] = smoothstep(0, 1, fadeProgress[i]);
+      }
+    } else {
+      fadeProgress[i] = target; // Sync progress when reached target
     }
   }
   
@@ -718,7 +834,7 @@ function updateMoveSpeeds(geometry) {
   geometry.attributes.aMoveSpeed.needsUpdate = true;
 }
 
-// Update particle movement every frame
+// Update particle movement every frame with S-curve
 function updateParticleMovement(geometry, deltaTime) {
   const count = geometry.attributes.aProgress.count;
   const progress = geometry.attributes.aProgress.array;
@@ -728,20 +844,62 @@ function updateParticleMovement(geometry, deltaTime) {
   // Assuming 60 FPS for frame-based move speed
   const frameMultiplier = deltaTime * 60;
   
+  // Store internal progress for S-curve
+  if (!geometry.userData.moveProgress) {
+    geometry.userData.moveProgress = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      geometry.userData.moveProgress[i] = progress[i]; // Initialize with current progress
+    }
+  }
+  const moveProgress = geometry.userData.moveProgress;
+  
   for (let i = 0; i < count; i++) {
-    const diff = targetProgress[i] - progress[i];
+    const target = targetProgress[i];
+    const current = progress[i];
+    const diff = target - current;
     
     if (Math.abs(diff) > 0.001) {
-      // Smooth transition towards target
+      // Update linear progress
       const step = moveSpeed[i] * frameMultiplier;
       
       if (diff > 0) {
-        progress[i] = Math.min(progress[i] + step, targetProgress[i]);
+        moveProgress[i] = Math.min(moveProgress[i] + step, 1.0);
       } else {
-        progress[i] = Math.max(progress[i] - step, targetProgress[i]);
+        moveProgress[i] = Math.max(moveProgress[i] - step, 0.0);
       }
+      
+      // Apply S-curve to the progress for smooth acceleration/deceleration
+      if (target > 0.5) {
+        // Moving to target: use smoothstep
+        progress[i] = smoothstep(0, 1, moveProgress[i]);
+      } else {
+        // Moving back to turbulent: use smoothstep
+        progress[i] = smoothstep(0, 1, moveProgress[i]);
+      }
+    } else {
+      moveProgress[i] = target; // Sync progress when reached target
     }
   }
   
   geometry.attributes.aProgress.needsUpdate = true;
+}
+
+// Update particle sizes when parameters change
+function updateParticleSizes(geometry) {
+  const count = geometry.attributes.aRandomSize.count;
+  const randomSize = geometry.attributes.aRandomSize.array;
+  
+  // Seeded random function
+  const seedRandom = (seed) => {
+    let x = Math.sin(seed) * 10000;
+    return x - Math.floor(x);
+  };
+  
+  for (let i = 0; i < count; i++) {
+    // Use deterministic random based on particle index
+    const t = seedRandom(i * 89.123 + 45.678);
+    randomSize[i] = params.particleSizeMin + t * (params.particleSizeMax - params.particleSizeMin);
+  }
+  
+  geometry.attributes.aRandomSize.needsUpdate = true;
 }
