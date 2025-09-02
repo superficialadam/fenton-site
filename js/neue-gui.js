@@ -52,7 +52,7 @@ const params = {
   showFrame: true
 };
 
-let renderer, scene, camera, particles, uniforms, clock, gui;
+let renderer, scene, camera, particles, uniforms, clock, gui, guiNeedsUpdate = false;
 
 init().catch(err => {
   console.error('Init error:', err);
@@ -341,18 +341,40 @@ function setupGUI(frame) {
     'State 3': 3,
     'State 4 (End)': 4
   }).name('Current State').onChange(v => {
-    loadAnimationState(parseInt(v));
+    // Stop animation when changing states
+    if (animationSystem.isPlaying) {
+      stopAnimation();
+    }
+    
+    // Load the selected state
+    const stateIndex = parseInt(v);
+    loadAnimationState(stateIndex);
+    
+    // Update duration control for the selected state
+    if (stateIndex > 0) {
+      durationControl.enable();
+      durationObj.duration = animationSystem.states[stateIndex].duration;
+      durationControl.updateDisplay();
+    } else {
+      durationControl.disable();
+    }
   });
   
-  // Duration control (not shown for state 0)
+  // Duration control (disabled for state 0)
+  const durationObj = { duration: animationSystem.states[animationSystem.currentState].duration };
   const durationControl = animSystemFolder.add(
-    { duration: animationSystem.states[animationSystem.currentState].duration },
+    durationObj,
     'duration', 0.1, 10, 0.1
   ).name('Duration (seconds)').onChange(v => {
     if (animationSystem.currentState > 0) {
       animationSystem.states[animationSystem.currentState].duration = v;
     }
   });
+  
+  // Disable duration for state 0
+  if (animationSystem.currentState === 0) {
+    durationControl.disable();
+  }
   
   // Store current params to selected state
   animSystemFolder.add({
@@ -1150,6 +1172,8 @@ function updateParticleSizes(geometry) {
 // Store current params to selected state
 function storeAnimationState() {
   const state = animationSystem.currentState;
+  
+  // Store ALL params when manually storing
   animationSystem.states[state].params = JSON.parse(JSON.stringify(params));
   console.log(`Stored current params to state ${state}`);
   
@@ -1164,15 +1188,23 @@ function storeAnimationState() {
 // Load params from selected state
 function loadAnimationState(stateIndex) {
   const state = animationSystem.states[stateIndex];
+  animationSystem.currentState = stateIndex;
+  
   if (state.params && Object.keys(state.params).length > 0) {
-    Object.assign(params, state.params);
+    // Update each param individually so GUI sees the changes
+    for (const key in state.params) {
+      if (params.hasOwnProperty(key)) {
+        params[key] = state.params[key];
+      }
+    }
     
     // Update all uniforms and controls
     applyAllParams();
     
-    // Refresh GUI to show new values
-    gui.destroy();
-    setupGUI(window.frame);
+    // Force GUI to update all displays
+    if (gui) {
+      gui.controllersRecursive().forEach(c => c.updateDisplay());
+    }
     
     console.log(`Loaded state ${stateIndex}`);
   } else {
@@ -1180,11 +1212,13 @@ function loadAnimationState(stateIndex) {
   }
 }
 
+
+
 // Apply all params to uniforms and geometry
 function applyAllParams() {
-  if (!uniforms) return;
+  if (!uniforms || !particles) return;
   
-  // Apply uniforms
+  // Apply ALL uniforms (including non-animatable ones)
   uniforms.uParticleSizeTarget.value = params.particleSizeTarget;
   uniforms.uSoftness.value = params.softness;
   uniforms.uEdgeFade.value = params.edgeFade;
@@ -1235,6 +1269,29 @@ function applyAllParams() {
   updateParticleSizes(particles.geometry);
   updateMoveSpeeds(particles.geometry);
   updateFadeSpeeds(particles.geometry);
+}
+
+// Apply only animatable parameters (for animation playback)
+function applyAnimatableParams() {
+  if (!uniforms || !particles) return;
+  
+  // Apply ONLY the animatable uniforms (NO size parameters)
+  uniforms.uTurbulence1Amount.value = params.turbulence1Amount;
+  uniforms.uTurbulence1Speed.value = params.turbulence1Speed;
+  uniforms.uTurbulence1Scale.value = params.turbulence1Scale;
+  uniforms.uTurbulence1Evolution.value = params.turbulence1Evolution;
+  uniforms.uTurbulence2Amount.value = params.turbulence2Amount;
+  uniforms.uTurbulence2Speed.value = params.turbulence2Speed;
+  uniforms.uTurbulence2Scale.value = params.turbulence2Scale;
+  uniforms.uTurbulence2Evolution.value = params.turbulence2Evolution;
+  uniforms.uVisiblePercentage.value = params.visiblePercentage;
+  uniforms.uMovePercentage.value = params.movePercentage;
+  
+  // Update particle targets for visibility and movement
+  updateParticleTargets(particles.geometry);
+  updateMovementTargets(particles.geometry);
+  
+  // DO NOT update particle sizes, softness, edge fade, etc.
 }
 
 // Start animation playback
@@ -1365,21 +1422,36 @@ function interpolateStates(fromIndex, toIndex, t) {
   // Use smoothstep for smoother transitions
   const smoothT = t * t * (3 - 2 * t);
   
-  // Interpolate numeric values
-  for (const key in from) {
-    if (typeof from[key] === 'number' && typeof to[key] === 'number') {
+  // Only animate specific parameters - NO SIZE PARAMETERS
+  const animatableParams = [
+    'movePercentage',           // Target %
+    'visiblePercentage',        // Visibility %
+    'turbulence1Amount',
+    'turbulence1Speed',
+    'turbulence1Scale',
+    'turbulence1Evolution',
+    'turbulence2Amount',
+    'turbulence2Speed',
+    'turbulence2Scale',
+    'turbulence2Evolution'
+  ];
+  
+  // Store non-animatable params from state 0 to preserve them
+  const preservedParams = ['particleSizeMin', 'particleSizeMax', 'particleSizeTarget', 
+                          'softness', 'edgeFade', 'fadeSpeedMin', 'fadeSpeedMax',
+                          'moveSpeedMin', 'moveSpeedMax', 'orderingMode', 'orderingScale',
+                          'backgroundColor', 'blendMode', 'showFrame'];
+  
+  // Interpolate only animatable parameters
+  for (const key of animatableParams) {
+    if (from.hasOwnProperty(key) && to.hasOwnProperty(key) && 
+        typeof from[key] === 'number' && typeof to[key] === 'number') {
       params[key] = from[key] + (to[key] - from[key]) * smoothT;
-    } else if (key === 'backgroundColor') {
-      // Interpolate colors
-      params[key] = interpolateColor(from[key], to[key], smoothT);
-    } else {
-      // Non-numeric values use from state until t > 0.5
-      params[key] = smoothT < 0.5 ? from[key] : to[key];
     }
   }
   
   // Apply interpolated params
-  applyAllParams();
+  applyAnimatableParams();
 }
 
 // Interpolate between two hex colors
