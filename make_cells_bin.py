@@ -13,7 +13,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("image")
     ap.add_argument("outbin")
-    ap.add_argument("--block", type=int, default=4)
+    ap.add_argument("--block", type=int, default=1)
     ap.add_argument("--black", type=int, default=10)
     ap.add_argument("--alpha", type=int, default=8)
     ap.add_argument("--preview", default=None)
