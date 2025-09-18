@@ -2,7 +2,13 @@
 import * as THREE from 'three';
 import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm';
 
-const CELLS_URL = './public/fentonText.bin';
+const SEQUENCE_URLS = [
+  './public/seq/step1.bin',
+  './public/seq/step2.bin',
+  './public/seq/step3.bin',
+  './public/seq/step4.bin',
+  './public/seq/step5.bin'
+];
 const CONFIG_URL = './config.json'; // Default config file
 
 const canvas = document.getElementById('bg-splats');
@@ -31,6 +37,7 @@ const params = {
   movePercentage: 0.0, // 0-1, percentage of particles that should move to target
   orderingMode: 'random', // 'islands', 'random', 'radial', 'grid', 'spiral', 'horizontal', 'vertical'
   orderingScale: 1.0, // Scale of the ordering pattern
+  sequenceIndex: 0, // 0-4, which sequence step to target
   turbulence1Amount: 1.2,
   turbulence1Speed: 0.6,
   turbulence1Scale: 0.9,
@@ -61,6 +68,10 @@ const params = {
 };
 
 let renderer, scene, camera, particles, uniforms, clock, gui, guiNeedsUpdate = false;
+
+// Sequence data storage
+let sequenceData = []; // Array to store all loaded .bin data
+let maxParticleCount = 0; // Max particles across all sequences
 
 // Scroll tracking variables
 let scrollY = 0;
@@ -98,35 +109,64 @@ async function init() {
   // Expose for DevTools
   Object.assign(window, { scene, camera, renderer });
 
-  // Load pre-baked cells
-  let data;
+  // Load all sequence files
   try {
-    data = await loadCellsBin(CELLS_URL);
-    console.log('cells.bin loaded:', data);
-    if (statsEl) statsEl.textContent = `cells: ${data.count} | grid: ${data.wCells}×${data.hCells}`;
+    console.log('Loading sequence files...');
+    for (let i = 0; i < SEQUENCE_URLS.length; i++) {
+      const data = await loadCellsBin(SEQUENCE_URLS[i]);
+      sequenceData[i] = data;
+      maxParticleCount = Math.max(maxParticleCount, data.count);
+      console.log(`Loaded ${SEQUENCE_URLS[i]}: ${data.count} particles`);
+    }
+    console.log(`All sequences loaded. Max particles: ${maxParticleCount}`);
+    if (statsEl) statsEl.textContent = `sequences: ${sequenceData.length} | max particles: ${maxParticleCount}`;
   } catch (e) {
-    console.warn('cells.bin failed to load; using fallback.', e);
+    console.warn('Sequence files failed to load; using fallback.', e);
     if (statsEl) statsEl.textContent = 'Using fallback particles';
-    data = fallbackCells();
+    const fallbackData = fallbackCells();
+    sequenceData = [fallbackData];
+    maxParticleCount = fallbackData.count;
   }
 
-  particles = makeInstancedParticles(data);
+  // Find max dimensions across all sequences for consistent viewport
+  let maxWCells = 0, maxHCells = 0;
+  for (const seq of sequenceData) {
+    maxWCells = Math.max(maxWCells, seq.wCells);
+    maxHCells = Math.max(maxHCells, seq.hCells);
+  }
+
+  // Create interpolated sequence data so every particle has a position in every sequence
+  const interpolatedSequences = createInterpolatedSequenceData(sequenceData, maxParticleCount);
+
+  // Replace original sequence data with interpolated data
+  sequenceData = interpolatedSequences;
+
+  // Create particle system with max capacity
+  const initialData = createParticleBuffer(maxParticleCount, sequenceData[params.sequenceIndex]);
+  // Override dimensions to use max values for consistent viewport
+  initialData.wCells = maxWCells;
+  initialData.hCells = maxHCells;
+
+  particles = makeInstancedParticles(initialData);
   scene.add(particles);
 
   // Store particle data for re-ordering
-  window.particleData = data;
+  window.particleData = initialData;
+  window.sequenceData = sequenceData;
 
   uniforms = particles.material.uniforms;
   uniforms.uPlane.value.copy(planeSizeAtZ0());
 
   // Frame helper
-  const frame = makeFrameHelper(uniforms.uPlane.value, data.wCells / data.hCells);
+  const frame = makeFrameHelper(uniforms.uPlane.value, initialData.wCells / initialData.hCells);
   frame.visible = params.showFrame;
   scene.add(frame);
   window.frame = frame;
 
   // Setup GUI
   setupGUI(frame);
+
+  // All sequences now have the same particle count, so no need for special switching
 
   // Initialize particle visibility and movement
   updateParticleTargets(particles.geometry);
@@ -164,7 +204,7 @@ async function init() {
 
   // Resize
   window.addEventListener('resize', onResize);
-  console.log('Init complete. Particles:', data.count);
+  console.log('Init complete. Particles:', initialData.count);
 }
 
 // Setup scroll listener
@@ -196,6 +236,19 @@ function setupGUI(frame) {
 
   // Animation folder
   const animFolder = gui.addFolder('Animation');
+
+  // Sequence selector
+  animFolder.add(params, 'sequenceIndex', {
+    'Step 1': 0,
+    'Step 2': 1,
+    'Step 3': 2,
+    'Step 4': 3,
+    'Step 5': 4
+  }).name('Target Image')
+    .onChange(v => {
+      switchToSequence(parseInt(v));
+    });
+
   animFolder.add(params, 'movePercentage', 0, 1, 0.01)
     .name('Move to Target %')
     .onChange(v => {
@@ -674,6 +727,82 @@ function fallbackCells() {
   return { count, wCells, hCells, block, uvs, colors };
 }
 
+function createInterpolatedSequenceData(sequenceData, maxCount) {
+  // Create interpolated positions for all particles across all sequences
+  const interpolatedSequences = [];
+
+  for (let seqIndex = 0; seqIndex < sequenceData.length; seqIndex++) {
+    const sequence = sequenceData[seqIndex];
+    const { count: originalCount, wCells, hCells, uvs: originalUvs, colors: originalColors } = sequence;
+
+    // Create arrays for max particle count
+    const uvs = new Float32Array(maxCount * 2);
+    const colors = new Uint8Array(maxCount * 4);
+
+    // Copy original particles
+    for (let i = 0; i < originalCount; i++) {
+      uvs[i * 2] = originalUvs[i * 2];
+      uvs[i * 2 + 1] = originalUvs[i * 2 + 1];
+      colors[i * 4] = originalColors[i * 4];
+      colors[i * 4 + 1] = originalColors[i * 4 + 1];
+      colors[i * 4 + 2] = originalColors[i * 4 + 2];
+      colors[i * 4 + 3] = originalColors[i * 4 + 3];
+    }
+
+    // For extra particles, sample from existing white/text positions
+    if (originalCount < maxCount) {
+      const extraCount = maxCount - originalCount;
+
+      // Seeded random function for deterministic sampling
+      const seedRandom = (seed) => {
+        let x = Math.sin(seed) * 10000;
+        return x - Math.floor(x);
+      };
+
+      for (let i = 0; i < extraCount; i++) {
+        const particleIndex = originalCount + i;
+
+        // Use deterministic random to pick an existing particle position to copy
+        const randomSeed = particleIndex * 123.456789;
+        const sourceIndex = Math.floor(seedRandom(randomSeed) * originalCount);
+
+        // Copy position from a random existing particle (white area)
+        uvs[particleIndex * 2] = originalUvs[sourceIndex * 2];
+        uvs[particleIndex * 2 + 1] = originalUvs[sourceIndex * 2 + 1];
+
+        // Copy color from the source particle as well
+        colors[particleIndex * 4] = originalColors[sourceIndex * 4];
+        colors[particleIndex * 4 + 1] = originalColors[sourceIndex * 4 + 1];
+        colors[particleIndex * 4 + 2] = originalColors[sourceIndex * 4 + 2];
+        colors[particleIndex * 4 + 3] = originalColors[sourceIndex * 4 + 3];
+      }
+    }
+
+    interpolatedSequences[seqIndex] = {
+      count: maxCount,
+      originalCount: originalCount,
+      wCells,
+      hCells,
+      uvs,
+      colors
+    };
+  }
+
+  return interpolatedSequences;
+}
+
+function createParticleBuffer(maxCount, activeSequence) {
+  // Simple wrapper for backward compatibility
+  return {
+    count: maxCount,
+    activeCount: activeSequence.originalCount || activeSequence.count,
+    wCells: activeSequence.wCells,
+    hCells: activeSequence.hCells,
+    uvs: activeSequence.uvs,
+    colors: activeSequence.colors
+  };
+}
+
 function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
   // Create a single plane geometry that will be instanced
   const planeGeom = new THREE.PlaneGeometry(1, 1);
@@ -687,6 +816,9 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
   // Add instance attributes
   geometry.setAttribute('aInstanceUV', new THREE.InstancedBufferAttribute(uvs, 2));
   geometry.setAttribute('aInstanceColor', new THREE.InstancedBufferAttribute(new Uint8Array(colors), 4, true));
+
+  // Add separate target UV coordinates (initially same as instance UV)
+  geometry.setAttribute('aTargetUV', new THREE.InstancedBufferAttribute(new Float32Array(uvs), 2));
 
   // Random start positions
   const aStart = new Float32Array(count * 3);
@@ -946,6 +1078,7 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
 
   const vertexShader = `
     attribute vec2 aInstanceUV;
+    attribute vec2 aTargetUV;
     attribute vec3 aInstanceStart;
     attribute vec4 aInstanceColor;
     attribute float aOpacity;
@@ -982,9 +1115,9 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
       vUv = uv;
       vOpacity = aOpacity;
 
-      // Map instance UV to image plane
+      // Map target UV to image plane (for target position)
       float planeAspect = uPlane.x / uPlane.y;
-      vec2 p = aInstanceUV * 2.0 - 1.0;
+      vec2 p = aTargetUV * 2.0 - 1.0;
       
       if (planeAspect > uImgAspect) {
         p.x *= (uImgAspect / planeAspect);
@@ -992,7 +1125,7 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
         p.y *= (planeAspect / uImgAspect);
       }
       
-      vec3 target = vec3(p * 0.5 * uPlane, 0.0);
+      vec3 target = vec3(p * uPlane * 0.5, 0.0);
 
       // Two layers of turbulence with evolution
       vec3 start = aInstanceStart;
@@ -1064,6 +1197,36 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
   console.log(`Instanced particles created: ${count} instances`);
 
   return mesh;
+}
+
+// Switch to a different sequence without particle jumps
+function switchToSequence(newIndex) {
+  if (!sequenceData[newIndex] || !particles) return;
+
+  const newSequence = sequenceData[newIndex];
+  const geometry = particles.geometry;
+
+  // Update target UVs for ALL particles (all sequences now have same particle count)
+  const targetUVs = geometry.attributes.aTargetUV.array;
+
+  // Update target UV coordinates for all particles
+  for (let i = 0; i < maxParticleCount; i++) {
+    targetUVs[i * 2] = newSequence.uvs[i * 2];
+    targetUVs[i * 2 + 1] = newSequence.uvs[i * 2 + 1];
+  }
+
+  // Mark target UVs for update
+  geometry.attributes.aTargetUV.needsUpdate = true;
+
+  // Update window reference
+  window.particleData = createParticleBuffer(maxParticleCount, newSequence);
+
+  // Keep consistent aspect ratio using max dimensions (don't change on switch)
+  // uniforms.uImgAspect.value remains the same for all sequences
+
+  const originalCount = newSequence.originalCount || newSequence.count;
+  console.log(`Switched to sequence ${newIndex}: ${originalCount} original particles, ${maxParticleCount} total particles`);
+  console.log('All particles will smoothly transition to new targets based on movePercentage');
 }
 
 function makeFrameHelper(planeVec2, imgAspect) {
