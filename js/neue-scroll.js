@@ -158,6 +158,11 @@ async function init() {
 
   uniforms = particles.material.uniforms;
   uniforms.uPlane.value.copy(planeSizeAtZ0());
+  
+  // Initialize sequence offset for the initial sequence
+  const planeSize = planeSizeAtZ0();
+  const sectionSpacing = planeSize.y;
+  uniforms.uSequenceOffset.value = -sectionSpacing * params.sequenceIndex;
 
   // Frame helper
   const frame = makeFrameHelper(uniforms.uPlane.value, initialData.wCells / initialData.hCells);
@@ -254,26 +259,29 @@ function updateDebugInfo() {
   }
 }
 
-// Update texture plane positions based on scroll
+// Update texture plane sizes based on window size
 function updateTexturePlanePositions() {
   if (texturePlanes.length === 0) return;
   
-  // Recalculate section centers on each update in case window size changes
-  const totalScrollHeight = document.documentElement.scrollHeight - window.innerHeight;
-  const sectionHeight = totalScrollHeight / 5;
+  // Get the visible plane size
+  const planeSize = planeSizeAtZ0();
+  const sectionSpacing = planeSize.y;
   
-  const sectionCenters = [];
-  for (let i = 0; i < 5; i++) {
-    sectionCenters.push((i * sectionHeight) + (sectionHeight / 2));
-  }
-  
-  // Fixed positions - planes don't move with scroll, they're stacked vertically
-  // Planes are 8 units tall, add 50% spacing = 12 units apart
-  const planePositions = [0, 0, -12, -24, -36];
+  // Scale planes to fit the window properly
+  const baseScale = Math.min(planeSize.x / 12, planeSize.y / 8); // Original planes were 12x8
   
   texturePlanes.forEach((plane, index) => {
-    plane.position.y = planePositions[index];
+    // Position planes to match HTML sections (one section spacing each)
+    plane.position.y = -sectionSpacing * index;
+    
+    // Scale the plane itself
+    plane.scale.set(baseScale, baseScale, 1);
   });
+  
+  // Update sequence offset for current sequence
+  if (uniforms && uniforms.uSequenceOffset) {
+    uniforms.uSequenceOffset.value = -sectionSpacing * params.sequenceIndex;
+  }
 }
 
 // Create texture planes with additive blending
@@ -309,26 +317,17 @@ async function createTexturePlanes() {
     console.log('Calculated scroll multiplier:', scrollMultiplier);
   }
   
-  // Calculate total scroll height and divide into 5 equal sections
-  const totalScrollHeight = document.documentElement.scrollHeight - window.innerHeight;
-  const sectionHeight = totalScrollHeight / 5;
+  // Calculate section positions to match HTML sections
+  const planeSize = planeSizeAtZ0();
+  const sectionSpacing = planeSize.y; // Each section is one viewport height
   
-  // Calculate center positions for each of the 5 sections
-  const sectionCenters = [];
-  for (let i = 0; i < 5; i++) {
-    sectionCenters.push((i * sectionHeight) + (sectionHeight / 2));
-  }
-  
-  console.log('Section centers:', sectionCenters);
-  
-  // Define texture configurations - stack planes vertically
-  // Planes are 8 units tall, so centers are spaced 8 units apart
+  // Define texture configurations - position to match HTML sections
   const textureConfigs = [
-    { file: './public/new/section1.png', position: 0, z: 0 },      // Center at 0
-    { file: './public/new/section2.png', position: 0, z: 0 },      // Center at 0 (same as above)
-    { file: './public/new/section3.png', position: -8, z: 0 },     // Center at -8 (top aligns with bottom of above)
-    { file: './public/new/section4.png', position: -16, z: 0 },    // Center at -16 (top aligns with bottom of above)
-    { file: './public/new/section5.png', position: -24, z: 0 }     // Center at -24 (top aligns with bottom of above)
+    { file: './public/new/section1.png', position: 0, z: 0 },                    // hero section
+    { file: './public/new/section2.png', position: -sectionSpacing, z: 0 },      // section-2
+    { file: './public/new/section3.png', position: -sectionSpacing * 2, z: 0 },  // section-3
+    { file: './public/new/section4.png', position: -sectionSpacing * 3, z: 0 },  // section-4
+    { file: './public/new/section5.png', position: -sectionSpacing * 4, z: 0 }   // section-5
   ];
 
   // Load all textures
@@ -357,24 +356,14 @@ async function createTexturePlanes() {
         opacity: 0.8
       });
       
-      // Create wireframe for debug border
-      const wireframeGeometry = new THREE.EdgesGeometry(geometry);
-      const wireframeMaterial = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2 });
-      const wireframe = new THREE.LineSegments(wireframeGeometry, wireframeMaterial);
-      
       // Create mesh
       const plane = new THREE.Mesh(geometry, material);
       
       // Position plane based on fixed position
-      const cameraY = config.position;
-      plane.position.set(0, cameraY, config.z);
-      
-      // Position wireframe at same location
-      wireframe.position.copy(plane.position);
+      plane.position.set(0, config.position, config.z);
       
       // Add to scene and store reference
       scene.add(plane);
-      scene.add(wireframe);
       texturePlanes.push(plane);
     });
     
@@ -840,6 +829,9 @@ function onResize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   if (uniforms) uniforms.uPlane.value.copy(planeSizeAtZ0());
+  
+  // Update texture plane scaling for new window size
+  updateTexturePlanePositions();
 }
 
 function planeSizeAtZ0() {
@@ -1239,7 +1231,8 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     uTurbulence2Evolution: { value: params.turbulence2Evolution },
     uVisiblePercentage: { value: params.visiblePercentage },
     uMovePercentage: { value: params.movePercentage },
-    uDeltaTime: { value: 0 }
+    uDeltaTime: { value: 0 },
+    uSequenceOffset: { value: 0 }
   };
 
   const vertexShader = `
@@ -1267,6 +1260,7 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     uniform float uTurbulence2Speed;
     uniform float uTurbulence2Scale;
     uniform float uTurbulence2Evolution;
+    uniform float uSequenceOffset;
 
     vec3 n3(vec3 p){
       return vec3(
@@ -1292,6 +1286,9 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
       }
       
       vec3 target = vec3(p * uPlane * 0.5, 0.0);
+      
+      // Offset target position based on sequence index to match texture plane positions
+      target.y += uSequenceOffset;
 
       // Two layers of turbulence with evolution
       vec3 start = aInstanceStart;
@@ -1390,8 +1387,15 @@ function switchToSequence(newIndex) {
   // Keep consistent aspect ratio using max dimensions (don't change on switch)
   // uniforms.uImgAspect.value remains the same for all sequences
 
+  // Update sequence offset to position particles at the correct texture plane location
+  const planeSize = planeSizeAtZ0();
+  const sectionSpacing = planeSize.y;
+  const sequenceOffset = -sectionSpacing * newIndex; // Each sequence offset by one section
+  uniforms.uSequenceOffset.value = sequenceOffset;
+
   const originalCount = newSequence.originalCount || newSequence.count;
   console.log(`Switched to sequence ${newIndex}: ${originalCount} original particles, ${maxParticleCount} total particles`);
+  console.log(`Sequence offset: ${sequenceOffset}`);
   console.log('All particles will smoothly transition to new targets based on movePercentage');
 }
 
