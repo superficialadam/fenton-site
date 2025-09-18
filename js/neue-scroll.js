@@ -63,11 +63,13 @@ const params = {
   cameraOffsetY: 0.0,
   cameraOffsetZ: 6.0,
   cameraFOV: 70,
-  scrollMultiplier: 0.01,
+  scrollMultiplier: 0.001, // Will be calculated automatically
   scrollDamping: 0.01
 };
 
 let renderer, scene, camera, particles, uniforms, clock, gui, guiNeedsUpdate = false;
+let texturePlanes = [];
+let debugInfo;
 
 // Sequence data storage
 let sequenceData = []; // Array to store all loaded .bin data
@@ -178,6 +180,12 @@ async function init() {
   // Setup scroll listener
   setupScrollListener();
 
+  // Create debug info display
+  createDebugInfo();
+
+  // Load textures and create planes
+  await createTexturePlanes();
+
   // Animate
   clock = new THREE.Clock();
   let lastTime = 0;
@@ -219,12 +227,170 @@ function setupScrollListener() {
   updateScroll(); // Initialize
 }
 
-// Update camera position with damping
+// Create debug info display
+function createDebugInfo() {
+  debugInfo = document.createElement('div');
+  debugInfo.style.position = 'fixed';
+  debugInfo.style.top = '10px';
+  debugInfo.style.left = '10px';
+  debugInfo.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+  debugInfo.style.color = 'white';
+  debugInfo.style.padding = '10px';
+  debugInfo.style.fontFamily = 'monospace';
+  debugInfo.style.fontSize = '14px';
+  debugInfo.style.zIndex = '1000';
+  document.body.appendChild(debugInfo);
+}
+
+// Update debug info
+function updateDebugInfo() {
+  if (debugInfo) {
+    debugInfo.innerHTML = `
+      Scroll Y: ${scrollY}<br>
+      Camera Y: ${camera.position.y.toFixed(2)}<br>
+      Target Camera Y: ${targetCameraY.toFixed(2)}<br>
+      Scroll Multiplier: ${params.scrollMultiplier}
+    `;
+  }
+}
+
+// Update texture plane positions based on scroll
+function updateTexturePlanePositions() {
+  if (texturePlanes.length === 0) return;
+  
+  // Recalculate section centers on each update in case window size changes
+  const totalScrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+  const sectionHeight = totalScrollHeight / 5;
+  
+  const sectionCenters = [];
+  for (let i = 0; i < 5; i++) {
+    sectionCenters.push((i * sectionHeight) + (sectionHeight / 2));
+  }
+  
+  // Fixed positions - planes don't move with scroll, they're stacked vertically
+  // Planes are 8 units tall, add 50% spacing = 12 units apart
+  const planePositions = [0, 0, -12, -24, -36];
+  
+  texturePlanes.forEach((plane, index) => {
+    plane.position.y = planePositions[index];
+  });
+}
+
+// Create texture planes with additive blending
+async function createTexturePlanes() {
+  const textureLoader = new THREE.TextureLoader();
+  
+  // Get first and last section elements to calculate proper scroll multiplier
+  const firstSection = document.getElementById('hero');
+  const lastSection = document.getElementById('section-5');
+  
+  if (firstSection && lastSection) {
+    const firstSectionRect = firstSection.getBoundingClientRect();
+    const lastSectionRect = lastSection.getBoundingClientRect();
+    
+    const firstSectionCenter = firstSectionRect.top + (firstSectionRect.height / 2);
+    const lastSectionCenter = lastSectionRect.top + (lastSectionRect.height / 2);
+    
+    const totalScrollDistance = lastSectionCenter - firstSectionCenter;
+    
+    // Calculate multiplier: first section center = camera Y = 0
+    // Last section center should map to camera Y that fits in FOV 70 at Z = 6
+    // With FOV 70 and Z = 6, we can see about 8.4 units height
+    // So we want last section at camera Y = -4.2 (half of visible area)
+    const desiredCameraYAtBottom = -4.2;
+    const scrollMultiplier = Math.abs(desiredCameraYAtBottom / totalScrollDistance);
+    
+    // Update the params with calculated multiplier (multiply by 0.001 for much finer control)
+    params.scrollMultiplier = scrollMultiplier * 0.001;
+    
+    console.log('First section center:', firstSectionCenter);
+    console.log('Last section center:', lastSectionCenter);
+    console.log('Total scroll distance:', totalScrollDistance);
+    console.log('Calculated scroll multiplier:', scrollMultiplier);
+  }
+  
+  // Calculate total scroll height and divide into 5 equal sections
+  const totalScrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+  const sectionHeight = totalScrollHeight / 5;
+  
+  // Calculate center positions for each of the 5 sections
+  const sectionCenters = [];
+  for (let i = 0; i < 5; i++) {
+    sectionCenters.push((i * sectionHeight) + (sectionHeight / 2));
+  }
+  
+  console.log('Section centers:', sectionCenters);
+  
+  // Define texture configurations - stack planes vertically
+  // Planes are 8 units tall, so centers are spaced 8 units apart
+  const textureConfigs = [
+    { file: './public/new/section1.png', position: 0, z: 0 },      // Center at 0
+    { file: './public/new/section2.png', position: 0, z: 0 },      // Center at 0 (same as above)
+    { file: './public/new/section3.png', position: -8, z: 0 },     // Center at -8 (top aligns with bottom of above)
+    { file: './public/new/section4.png', position: -16, z: 0 },    // Center at -16 (top aligns with bottom of above)
+    { file: './public/new/section5.png', position: -24, z: 0 }     // Center at -24 (top aligns with bottom of above)
+  ];
+
+  // Load all textures
+  const texturePromises = textureConfigs.map(config => 
+    new Promise((resolve, reject) => {
+      textureLoader.load(config.file, resolve, undefined, reject);
+    })
+  );
+
+  try {
+    const textures = await Promise.all(texturePromises);
+    
+    // Create planes for each texture
+    textureConfigs.forEach((config, index) => {
+      const texture = textures[index];
+      
+      // Create plane geometry - 12 wide, 8 tall
+      const geometry = new THREE.PlaneGeometry(12, 8);
+      
+      // Create material with additive blending
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        opacity: 0.8
+      });
+      
+      // Create wireframe for debug border
+      const wireframeGeometry = new THREE.EdgesGeometry(geometry);
+      const wireframeMaterial = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2 });
+      const wireframe = new THREE.LineSegments(wireframeGeometry, wireframeMaterial);
+      
+      // Create mesh
+      const plane = new THREE.Mesh(geometry, material);
+      
+      // Position plane based on fixed position
+      const cameraY = config.position;
+      plane.position.set(0, cameraY, config.z);
+      
+      // Position wireframe at same location
+      wireframe.position.copy(plane.position);
+      
+      // Add to scene and store reference
+      scene.add(plane);
+      scene.add(wireframe);
+      texturePlanes.push(plane);
+    });
+    
+    console.log(`Created ${texturePlanes.length} texture planes with additive blending`);
+  } catch (error) {
+    console.error('Error loading textures:', error);
+  }
+}
+
+// Update camera position without damping
 function updateScrollCamera(deltaTime) {
-  const diff = targetCameraY - currentCameraY;
-  // Simple linear interpolation with damping
-  currentCameraY += diff * params.scrollDamping;
-  camera.position.y = currentCameraY;
+  // Direct mapping without damping
+  camera.position.y = targetCameraY;
+  
+  // Update debug info
+  updateDebugInfo();
 }
 
 function setupGUI(frame) {
@@ -452,7 +618,7 @@ function setupGUI(frame) {
       // Update plane size when FOV changes
       if (uniforms) uniforms.uPlane.value.copy(planeSizeAtZ0());
     });
-  cameraFolder.add(params, 'scrollMultiplier', 0.001, 0.1, 0.001)
+  cameraFolder.add(params, 'scrollMultiplier', 0.001, 0.1, 0.0001)
     .name('Scroll Multiplier')
     .onChange(v => {
       // Recalculate target position with new multiplier
