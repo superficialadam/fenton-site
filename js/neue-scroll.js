@@ -33,7 +33,7 @@ const animationSystem = {
 const params = {
   particleSizeMin: 0.01, // Random size min
   particleSizeMax: 0.03, // Random size max
-  particleSizeTarget: 0.03, // Fixed size at target
+  particleSizeTarget: 0.01, // Fixed size at target
   movePercentage: 1.0, // 0-1, percentage of particles that should move to target (start with step2 visible)
   orderingMode: 'random', // 'islands', 'random', 'radial', 'grid', 'spiral', 'horizontal', 'vertical'
   orderingScale: 1.0, // Scale of the ordering pattern
@@ -89,8 +89,7 @@ init().catch(err => {
 });
 
 async function init() {
-  // Try to load config file
-  await loadConfig(CONFIG_URL);
+  // Config loading removed - using init params in code
 
   // Try to load animation file
   await loadAnimationFile();
@@ -189,11 +188,11 @@ async function init() {
   // Setup scroll listener
   setupScrollListener();
 
-  // Create debug info display
-  createDebugInfo();
+  // Create debug info display - DISABLED
+  // createDebugInfo();
 
-  // Load textures and create planes
-  await createTexturePlanes();
+  // Load textures and create planes - DISABLED
+  // await createTexturePlanes();
 
   // Animate
   clock = new THREE.Clock();
@@ -527,13 +526,14 @@ async function createTexturePlanes() {
   const planeSize = planeSizeAtZ0();
   const sectionSpacing = planeSize.y; // Each section is one viewport height
 
-  // Define texture configurations - compressed spacing (move everything up one step except first)
+  // Define texture configurations - compressed spacing with reduced distance
+  const spacingFactor = 0.5; // Reduce spacing between targets
   const textureConfigs = [
     { file: './public/new/section1.png', position: 0, z: 0 },                    // stays at 0
     { file: './public/new/section2.png', position: 0, z: 0 },                    // moved up to 0 (same as section1)
-    { file: './public/new/section3.png', position: -sectionSpacing, z: 0 },      // moved up to -1*spacing
-    { file: './public/new/section4.png', position: -sectionSpacing * 2, z: 0 },  // moved up to -2*spacing
-    { file: './public/new/section5.png', position: -sectionSpacing * 3, z: 0 }   // moved up to -3*spacing
+    { file: './public/new/section3.png', position: -sectionSpacing * spacingFactor, z: 0 },      // moved up to -0.5*spacing
+    { file: './public/new/section4.png', position: -sectionSpacing * spacingFactor * 2, z: 0 },  // moved up to -1*spacing
+    { file: './public/new/section5.png', position: -sectionSpacing * spacingFactor * 3, z: 0 }   // moved up to -1.5*spacing
   ];
 
   // Load all textures
@@ -594,6 +594,9 @@ function setupGUI(frame) {
   if (oldHud) oldHud.remove();
 
   gui = new GUI({ title: 'Particle Controls' });
+
+  // Hide GUI by default
+  gui.hide();
 
   // Animation folder
   const animFolder = gui.addFolder('Animation');
@@ -940,7 +943,7 @@ function setupGUI(frame) {
   uniforms.uDragAmount.value = params.dragAmount;
 
   // Add keyboard shortcuts
-  let guiHidden = false;
+  let guiHidden = true; // GUI is hidden by default
   document.addEventListener('keydown', (event) => {
     // Spacebar: Play/Stop animation
     if (event.code === 'Space') {
@@ -1520,8 +1523,9 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
       } else {
         p.y *= (planeAspect / uImgAspect);
       }
+
       
-      vec3 target = vec3(p * uPlane * 0.5, 0.0);
+      vec3 target = vec3(p * uPlane * 0.45, 0.0); 
       
       // Offset target position based on sequence index to match texture plane positions
       target.y += uSequenceOffset;
@@ -1633,10 +1637,11 @@ function switchToSequence(newIndex) {
   // uniforms.uImgAspect.value remains the same for all sequences
 
   // Update sequence offset to position particles at the correct texture plane location
-  // Compressed spacing: section1=0, section2=0, section3=-1*spacing, section4=-2*spacing, section5=-3*spacing
+  // Compressed spacing: section1=0, section2=0, section3=-0.5*spacing, section4=-1*spacing, section5=-1.5*spacing
   const planeSize = planeSizeAtZ0();
   const sectionSpacing = planeSize.y;
-  const sequenceOffset = newIndex <= 1 ? 0 : -sectionSpacing * (newIndex - 1); // Move everything up one step except first
+  const spacingFactor = 0.8; // Reduce spacing between targets
+  const sequenceOffset = newIndex <= 1 ? 0 : -sectionSpacing * (newIndex - 1) * spacingFactor; // Closer spacing
   uniforms.uSequenceOffset.value = sequenceOffset;
 
   const originalCount = newSequence.originalCount || newSequence.count;
