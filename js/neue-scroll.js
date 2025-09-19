@@ -1340,29 +1340,28 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
 
       // Two layers of turbulence with evolution
       vec3 start = aInstanceStart;
-      
+
       // First turbulence layer - evolves through noise space
       vec3 noiseCoord1 = start * uTurbulence1Scale + vec3(0.0, 0.0, uTime * uTurbulence1Evolution);
       vec3 wobble1 = n3(noiseCoord1 + uTime * uTurbulence1Speed) * uTurbulence1Amount;
-      
+
       // Second turbulence layer - different scale and evolution
       vec3 noiseCoord2 = start * uTurbulence2Scale + vec3(0.0, 0.0, uTime * uTurbulence2Evolution);
       vec3 wobble2 = n3(noiseCoord2 * 1.7 + uTime * uTurbulence2Speed + 100.0) * uTurbulence2Amount;
-      
+
       vec3 turbulent = start + wobble1 + wobble2;
 
-      // Apply dragged camera Y tracking to turbulent position (keeps local offset)
-      // When aProgress is 0 (not moving to target), particles follow camera Y with drag
-      // When aProgress is 1 (moving to target), particles ignore camera Y tracking
-      float cameraYInfluence = 1.0 - aProgress;
-
-      // Apply drag: each particle catches up to camera Y at different speeds
-      // The drag creates a trailing effect where particles lag behind camera movement
+      // Calculate dragged camera Y
       float draggedCameraY = mix(aPrevCameraY, uCameraY, uDragAmount);
-      turbulent.y += draggedCameraY * cameraYInfluence;
 
-      // Use per-particle progress (already smoothstepped in JavaScript)
+      // Interpolate between turbulent and target positions FIRST
       vec3 instancePos = mix(turbulent, target, aProgress);
+
+      // THEN apply camera Y influence to the interpolated position
+      // When aProgress=0: particles follow camera Y movement (full influence)
+      // When aProgress=1: particles ignore camera Y (no influence, stay at target)
+      float cameraYInfluence = 1.0 - aProgress;
+      instancePos.y += draggedCameraY * cameraYInfluence;
 
       // Interpolate particle size based on progress
       float particleSize = mix(aRandomSize, uParticleSizeTarget, aProgress);
