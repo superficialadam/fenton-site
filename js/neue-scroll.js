@@ -51,8 +51,8 @@ const params = {
   visiblePercentage: 1.0, // 0-1, percentage of particles that should be visible
   fadeSpeedMin: 30, // Min frames to fade (30 = 0.5 sec at 60fps)
   fadeSpeedMax: 90, // Max frames to fade (90 = 1.5 sec at 60fps)
-  moveSpeedMin: 60, // Min frames to reach target position
-  moveSpeedMax: 180, // Max frames to reach target position
+  moveSpeedMin: 45, // Min frames to reach target position
+  moveSpeedMax: 100, // Max frames to reach target position
   dragAmount: 0.05, // Amount of drag applied to particles
   dragSpeedMin: 30, // Min frames for drag catchup
   dragSpeedMax: 120, // Max frames for drag catchup
@@ -238,8 +238,6 @@ function setupScrollListener() {
     // Update scroll-based transitions
     updateScrollTransitions();
 
-    // Check if pending sequence switch can be executed
-    checkPendingSequenceSwitch();
   };
 
   window.addEventListener('scroll', updateScroll, { passive: true });
@@ -249,7 +247,6 @@ function setupScrollListener() {
 // Scroll transition state tracking
 let currentScrollState = null;
 let disperseStartTime = null; // Track when particles started dispersing
-let pendingSequenceSwitch = null; // Queue sequence switch for after dispersion
 
 // Scroll-based transition system
 function updateScrollTransitions() {
@@ -301,41 +298,39 @@ function updateScrollTransitions() {
   const sec3Percent = getSectionPercent(section3Rect);
   const sec4Percent = getSectionPercent(section4Rect);
 
-  // Determine state based on scroll percentages
-  // 35% = particles gather at this section's target
-  // 60% = particles disperse from this section
+  // DEAD SIMPLE LOGIC: 40-60% window for each section
+  // If a section is 40-60%, it's THE target. Otherwise NO target (dispersed).
 
-  if (sec4Percent >= 35 && sec4Percent < 60) {
-    newState = 'in-section4'; // Section 4 active (35-60%) - Step 5
-  } else if (sec4Percent >= 60) {
-    newState = 'leaving-section4'; // Leaving section 4 (60%+) - disperse
-  } else if (sec3Percent >= 35 && sec3Percent < 60) {
-    newState = 'in-section3'; // Section 3 active (35-60%) - Step 4
-  } else if (sec3Percent >= 60) {
-    newState = 'leaving-section3'; // Leaving section 3 (60%+) - disperse
-  } else if (sec2Percent >= 35 && sec2Percent < 60) {
-    newState = 'in-section2'; // Section 2 active (35-60%) - Step 3
-  } else if (sec2Percent >= 60) {
-    newState = 'leaving-section2'; // Leaving section 2 (60%+) - disperse
-  } else if (heroPercent >= 35 && heroPercent < 60) {
-    newState = 'in-hero'; // Hero active (35-60%) - Step 2
-  } else if (heroPercent >= 60) {
-    newState = 'leaving-hero'; // Leaving hero (60%+) - disperse
-  } else {
-    newState = 'dispersed'; // Between sections - particles dispersed
+  newState = 'dispersed'; // Default: no target
+
+  // Check each section individually - only ONE can be active
+  if (heroPercent >= 40 && heroPercent <= 60) {
+    newState = 'in-hero'; // Hero is THE target
+  } else if (sec2Percent >= 40 && sec2Percent <= 60) {
+    newState = 'in-section2'; // Section2 is THE target
+  } else if (sec3Percent >= 40 && sec3Percent <= 60) {
+    newState = 'in-section3'; // Section3 is THE target
+  } else if (sec4Percent >= 40 && sec4Percent <= 60) {
+    newState = 'in-section4'; // Section4 is THE target
   }
+  // If no section is 40-60%, newState stays 'dispersed'
 
   // Debug EVERY scroll event to see what's happening
   console.log(`SCROLL DEBUG:`);
   console.log(`  ScrollY: ${window.scrollY}`);
-  console.log(`  Viewport: ${viewportHeight}px`);
-  console.log(`  Enter threshold (35%): ${enterThreshold.toFixed(0)}px`);
-  console.log(`  Leave threshold (65%): ${leaveThreshold.toFixed(0)}px`);
-  console.log(`  Hero: top=${heroRect.top.toFixed(0)} bottom=${heroRect.bottom.toFixed(0)} height=${heroRect.height.toFixed(0)}`);
-  console.log(`  Sec2: top=${section2Rect.top.toFixed(0)} bottom=${section2Rect.bottom.toFixed(0)} height=${section2Rect.height.toFixed(0)}`);
-  console.log(`  Sec3: top=${section3Rect.top.toFixed(0)} bottom=${section3Rect.bottom.toFixed(0)} height=${section3Rect.height.toFixed(0)}`);
-  console.log(`  Sec4: top=${section4Rect.top.toFixed(0)} bottom=${section4Rect.bottom.toFixed(0)} height=${section4Rect.height.toFixed(0)}`);
+  console.log(`  PERCENTAGES: Hero=${heroPercent.toFixed(1)}% Sec2=${sec2Percent.toFixed(1)}% Sec3=${sec3Percent.toFixed(1)}% Sec4=${sec4Percent.toFixed(1)}%`);
+  console.log(`  40-60% CHECK: Hero=${heroPercent >= 40 && heroPercent <= 60} Sec2=${sec2Percent >= 40 && sec2Percent <= 60} Sec3=${sec3Percent >= 40 && sec3Percent <= 60} Sec4=${sec4Percent >= 40 && sec4Percent <= 60}`);
   console.log(`  Calculated state: ${newState}`);
+
+  // Show what target I believe should be active
+  let expectedTarget = "DISPERSED";
+  if (heroPercent >= 40 && heroPercent <= 60) expectedTarget = "STEP2 (HERO section)";
+  else if (sec2Percent >= 40 && sec2Percent <= 60) expectedTarget = "STEP3 (SECTION-2)";
+  else if (sec3Percent >= 40 && sec3Percent <= 60) expectedTarget = "STEP4 (SECTION-3)";
+  else if (sec4Percent >= 40 && sec4Percent <= 60) expectedTarget = "STEP5 (SECTION-4)";
+
+  console.log(`  EXPECTED TARGET: ${expectedTarget}`);
+  console.log(`  CURRENT SEQUENCE: ${params.sequenceIndex} (should be: ${expectedTarget.includes('STEP2') ? '1' : expectedTarget.includes('STEP3') ? '2' : expectedTarget.includes('STEP4') ? '3' : expectedTarget.includes('STEP5') ? '4' : 'no change'})`);
 
   // Debug log state changes
   if (newState !== currentScrollState) {
@@ -344,56 +339,29 @@ function updateScrollTransitions() {
     currentScrollState = newState;
 
     switch (newState) {
-      // IN SECTION STATES - particles should form at this section's target (sequence already switched)
+      // ACTIVE TARGET STATES - particles form at this section's target
       case 'in-hero':
-        updateParticleParams(1.0, 1.0, 1); // Step 2 (index 1) - particles form at hero target
+        updateParticleParams(1.0, 1.0, 1); // HERO → step2 (but step2 is index 1 in array) - NO GUARD, ALWAYS UPDATE
         break;
       case 'in-section2':
-        updateParticleParams(1.0, 1.0, 2); // Step 3 (index 2) - particles form at section2 target
+        updateParticleParams(1.0, 1.0, 2); // SECTION-2 → step3 (but step3 is index 2 in array) - NO GUARD, ALWAYS UPDATE
         break;
       case 'in-section3':
-        updateParticleParams(1.0, 1.0, 3); // Step 4 (index 3) - particles form at section3 target
+        updateParticleParams(1.0, 1.0, 3); // SECTION-3 → step4 (but step4 is index 3 in array) - NO GUARD, ALWAYS UPDATE
         break;
       case 'in-section4':
-        updateParticleParams(1.0, 1.0, 4); // Step 5 (index 4) - particles form at section4 target
+        updateParticleParams(1.0, 1.0, 4); // SECTION-4 → step5 (but step5 is index 4 in array) - NO GUARD, ALWAYS UPDATE
         break;
 
-      // LEAVING SECTION STATES - disperse particles only, do NOT change sequence
-      case 'leaving-hero':
-        updateParticleParams(0.0, 0.22, null); // Disperse only, keep current sequence
-        break;
-      case 'leaving-section2':
-        updateParticleParams(0.0, 0.22, null); // Disperse only, keep current sequence
-        break;
-      case 'leaving-section3':
-        updateParticleParams(0.0, 0.22, null); // Disperse only, keep current sequence
-        break;
-      case 'leaving-section4':
-        updateParticleParams(0.0, 0.22, null); // Disperse only, keep current sequence
-        break;
-
-      // DISPERSED STATE - particles scattered between sections
+      // DISPERSED STATE - no target, particles scattered
       case 'dispersed':
-        updateParticleParams(0.0, 0.22, null); // Keep dispersed
+        updateParticleParams(0.0, 0.22, null); // Keep dispersed, no sequence change
         break;
     }
   }
 }
 
-// Check if we can execute a pending sequence switch
-function checkPendingSequenceSwitch() {
-  if (pendingSequenceSwitch !== null && disperseStartTime !== null) {
-    const timeSinceDisperse = Date.now() - disperseStartTime;
 
-    if (timeSinceDisperse >= 3000) { // 3 seconds have passed
-      console.log(`Executing pending sequence switch to ${pendingSequenceSwitch} (${timeSinceDisperse}ms since dispersion)`);
-      params.sequenceIndex = pendingSequenceSwitch;
-      switchToSequence(pendingSequenceSwitch);
-      disperseStartTime = null; // Reset timer
-      pendingSequenceSwitch = null; // Clear pending switch
-    }
-  }
-}
 
 // Helper function to update particle parameters
 function updateParticleParams(movePercentage, visiblePercentage, sequenceIndex) {
@@ -402,12 +370,6 @@ function updateParticleParams(movePercentage, visiblePercentage, sequenceIndex) 
     params.movePercentage = movePercentage;
     if (uniforms) uniforms.uMovePercentage.value = movePercentage;
     if (particles) updateMovementTargets(particles.geometry);
-
-    // Track when particles start dispersing
-    if (movePercentage === 0.0) {
-      disperseStartTime = Date.now();
-      console.log('Particles started dispersing - waiting 3 seconds before allowing sequence switch');
-    }
   }
 
   if (visiblePercentage !== null) {
@@ -416,21 +378,11 @@ function updateParticleParams(movePercentage, visiblePercentage, sequenceIndex) 
     if (particles) updateParticleTargets(particles.geometry);
   }
 
-  // Handle sequence switching with 3-second delay protection
+  // Handle sequence switching - NO TIMING GUARDS, JUST SWITCH IMMEDIATELY
   if (sequenceIndex !== null && sequenceIndex !== params.sequenceIndex) {
-    const timeSinceDisperse = disperseStartTime ? (Date.now() - disperseStartTime) : 9999;
-
-    if (timeSinceDisperse >= 3000) { // 3 seconds have passed - safe to switch
-      console.log(`Switching sequence from ${params.sequenceIndex} to ${sequenceIndex} (dispersed for ${timeSinceDisperse}ms)`);
-      params.sequenceIndex = sequenceIndex;
-      switchToSequence(sequenceIndex);
-      disperseStartTime = null; // Reset timer
-      pendingSequenceSwitch = null; // Clear any pending switch
-    } else {
-      // Queue the switch for later
-      console.log(`Sequence switch queued - only ${timeSinceDisperse}ms since dispersion (need 3000ms). Queuing switch to ${sequenceIndex}`);
-      pendingSequenceSwitch = sequenceIndex;
-    }
+    console.log(`Switching sequence from ${params.sequenceIndex} to ${sequenceIndex} IMMEDIATELY`);
+    params.sequenceIndex = sequenceIndex;
+    switchToSequence(sequenceIndex);
   }
 }
 
