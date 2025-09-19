@@ -32,8 +32,8 @@ const animationSystem = {
 // Default parameters
 const params = {
   particleSizeMin: 0.01, // Random size min
-  particleSizeMax: 0.03, // Random size max
-  particleSizeTarget: 0.01, // Fixed size at target
+  particleSizeMax: 0.09, // Random size max
+  particleSizeTarget: 0.02, // Fixed size at target
   movePercentage: 1.0, // 0-1, percentage of particles that should move to target (start with step2 visible)
   orderingMode: 'random', // 'islands', 'random', 'radial', 'grid', 'spiral', 'horizontal', 'vertical'
   orderingScale: 1.0, // Scale of the ordering pattern
@@ -45,14 +45,14 @@ const params = {
   turbulence2Amount: 0.5,
   turbulence2Speed: 0.3,
   turbulence2Scale: 2.0,
-  turbulence2Evolution: 0.2,
-  softness: 1.0, // 0 = very soft, 1 = hard edge
+  turbulence2Evolution: 1.2,
+  softness: 0.2, // 0 = very soft, 1 = hard edge
   edgeFade: 0.3, // Controls fade range
   visiblePercentage: 1.0, // 0-1, percentage of particles that should be visible
   fadeSpeedMin: 30, // Min frames to fade (30 = 0.5 sec at 60fps)
   fadeSpeedMax: 90, // Max frames to fade (90 = 1.5 sec at 60fps)
   moveSpeedMin: 45, // Min frames to reach target position
-  moveSpeedMax: 100, // Max frames to reach target position
+  moveSpeedMax: 90, // Max frames to reach target position
   dragAmount: 0.05, // Amount of drag applied to particles
   dragSpeedMin: 30, // Min frames for drag catchup
   dragSpeedMax: 120, // Max frames for drag catchup
@@ -67,10 +67,13 @@ const params = {
   cameraOffsetZ: 6.0,
   cameraFOV: 70,
   scrollMultiplier: 0.01, // Scroll multiplier
-  scrollDamping: 0.05
+  scrollDamping: 0.11,
+
+  // Turbulent particles
+  turbulentParticleCount: 400 // Number of always-turbulent particles
 };
 
-let renderer, scene, camera, particles, uniforms, clock, gui, guiNeedsUpdate = false;
+let renderer, scene, camera, particles, turbulentParticles, uniforms, turbulentUniforms, clock, gui, guiNeedsUpdate = false;
 let texturePlanes = [];
 let debugInfo;
 
@@ -154,12 +157,19 @@ async function init() {
   particles = makeInstancedParticles(initialData);
   scene.add(particles);
 
+  // Create turbulent particles
+  turbulentParticles = makeTurbulentParticles(params.turbulentParticleCount);
+  scene.add(turbulentParticles);
+
   // Store particle data for re-ordering
   window.particleData = initialData;
   window.sequenceData = sequenceData;
 
   uniforms = particles.material.uniforms;
   uniforms.uPlane.value.copy(planeSizeAtZ0());
+
+  turbulentUniforms = turbulentParticles.material.uniforms;
+  turbulentUniforms.uPlane.value.copy(planeSizeAtZ0());
 
   // Initialize sequence offset for the initial sequence (compressed spacing)
   const planeSize = planeSizeAtZ0();
@@ -205,11 +215,15 @@ async function init() {
     uniforms.uTime.value = currentTime;
     uniforms.uDeltaTime.value = deltaTime;
 
+    turbulentUniforms.uTime.value = currentTime;
+    turbulentUniforms.uDeltaTime.value = deltaTime;
+
     // Update scroll-based camera movement
     updateScrollCamera(deltaTime);
 
     // Update camera Y position for particle tracking
     uniforms.uCameraY.value = camera.position.y;
+    turbulentUniforms.uCameraY.value = camera.position.y;
 
     // Update animation system
     updateAnimation();
@@ -218,6 +232,11 @@ async function init() {
     updateParticleVisibility(particles.geometry, deltaTime);
     updateParticleMovement(particles.geometry, deltaTime);
     updateParticleDrag(particles.geometry, deltaTime);
+
+    // Update turbulent particles (they stay at default values)
+    updateParticleVisibility(turbulentParticles.geometry, deltaTime);
+    updateParticleMovement(turbulentParticles.geometry, deltaTime);
+    updateParticleDrag(turbulentParticles.geometry, deltaTime);
 
     renderer.render(scene, camera);
   });
@@ -579,10 +598,13 @@ async function createTexturePlanes() {
   }
 }
 
-// Update camera position without damping
+// Update camera position with damping
 function updateScrollCamera(deltaTime) {
-  // Direct mapping without damping
-  camera.position.y = targetCameraY;
+  // Damped camera movement
+  const dampingFactor = params.scrollDamping; // Use the GUI controllable damping
+  currentCameraY += (targetCameraY - currentCameraY) * dampingFactor * deltaTime * 60; // Assuming 60fps
+
+  camera.position.y = currentCameraY;
 
   // Update debug info
   updateDebugInfo();
@@ -715,21 +737,25 @@ function setupGUI(frame) {
     .name('Amount')
     .onChange(v => {
       uniforms.uTurbulence1Amount.value = v;
+      if (turbulentUniforms) turbulentUniforms.uTurbulence1Amount.value = v;
     });
   turb1Folder.add(params, 'turbulence1Speed', 0, 2, 0.01)
     .name('Speed')
     .onChange(v => {
       uniforms.uTurbulence1Speed.value = v;
+      if (turbulentUniforms) turbulentUniforms.uTurbulence1Speed.value = v;
     });
   turb1Folder.add(params, 'turbulence1Scale', 0.1, 5, 0.01)
     .name('Scale')
     .onChange(v => {
       uniforms.uTurbulence1Scale.value = v;
+      if (turbulentUniforms) turbulentUniforms.uTurbulence1Scale.value = v;
     });
   turb1Folder.add(params, 'turbulence1Evolution', 0, 2, 0.01)
     .name('Evolution')
     .onChange(v => {
       uniforms.uTurbulence1Evolution.value = v;
+      if (turbulentUniforms) turbulentUniforms.uTurbulence1Evolution.value = v;
     });
   turb1Folder.open();
 
@@ -739,21 +765,25 @@ function setupGUI(frame) {
     .name('Amount')
     .onChange(v => {
       uniforms.uTurbulence2Amount.value = v;
+      if (turbulentUniforms) turbulentUniforms.uTurbulence2Amount.value = v;
     });
   turb2Folder.add(params, 'turbulence2Speed', 0, 2, 0.01)
     .name('Speed')
     .onChange(v => {
       uniforms.uTurbulence2Speed.value = v;
+      if (turbulentUniforms) turbulentUniforms.uTurbulence2Speed.value = v;
     });
   turb2Folder.add(params, 'turbulence2Scale', 0.1, 5, 0.01)
     .name('Scale')
     .onChange(v => {
       uniforms.uTurbulence2Scale.value = v;
+      if (turbulentUniforms) turbulentUniforms.uTurbulence2Scale.value = v;
     });
   turb2Folder.add(params, 'turbulence2Evolution', 0, 2, 0.01)
     .name('Evolution')
     .onChange(v => {
       uniforms.uTurbulence2Evolution.value = v;
+      if (turbulentUniforms) turbulentUniforms.uTurbulence2Evolution.value = v;
     });
   turb2Folder.open();
 
@@ -942,6 +972,22 @@ function setupGUI(frame) {
   uniforms.uTurbulence2Evolution.value = params.turbulence2Evolution;
   uniforms.uDragAmount.value = params.dragAmount;
 
+  // Apply to turbulent particles
+  if (turbulentUniforms) {
+    turbulentUniforms.uParticleSizeTarget.value = params.particleSizeTarget;
+    turbulentUniforms.uSoftness.value = params.softness;
+    turbulentUniforms.uEdgeFade.value = params.edgeFade;
+    turbulentUniforms.uTurbulence1Amount.value = params.turbulence1Amount;
+    turbulentUniforms.uTurbulence1Speed.value = params.turbulence1Speed;
+    turbulentUniforms.uTurbulence1Scale.value = params.turbulence1Scale;
+    turbulentUniforms.uTurbulence1Evolution.value = params.turbulence1Evolution;
+    turbulentUniforms.uTurbulence2Amount.value = params.turbulence2Amount;
+    turbulentUniforms.uTurbulence2Speed.value = params.turbulence2Speed;
+    turbulentUniforms.uTurbulence2Scale.value = params.turbulence2Scale;
+    turbulentUniforms.uTurbulence2Evolution.value = params.turbulence2Evolution;
+    turbulentUniforms.uDragAmount.value = params.dragAmount;
+  }
+
   // Add keyboard shortcuts
   let guiHidden = true; // GUI is hidden by default
   document.addEventListener('keydown', (event) => {
@@ -1045,6 +1091,7 @@ function onResize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   if (uniforms) uniforms.uPlane.value.copy(planeSizeAtZ0());
+  if (turbulentUniforms) turbulentUniforms.uPlane.value.copy(planeSizeAtZ0());
 
   // Update texture plane scaling for new window size
   updateTexturePlanePositions();
@@ -1113,14 +1160,14 @@ function createInterpolatedSequenceData(sequenceData, maxCount) {
     const uvs = new Float32Array(maxCount * 2);
     const colors = new Uint8Array(maxCount * 4);
 
-    // Copy original particles
+    // Copy original particles - make all white
     for (let i = 0; i < originalCount; i++) {
       uvs[i * 2] = originalUvs[i * 2];
       uvs[i * 2 + 1] = originalUvs[i * 2 + 1];
-      colors[i * 4] = originalColors[i * 4];
-      colors[i * 4 + 1] = originalColors[i * 4 + 1];
-      colors[i * 4 + 2] = originalColors[i * 4 + 2];
-      colors[i * 4 + 3] = originalColors[i * 4 + 3];
+      colors[i * 4] = 255; // White R
+      colors[i * 4 + 1] = 255; // White G
+      colors[i * 4 + 2] = 255; // White B
+      colors[i * 4 + 3] = originalColors[i * 4 + 3]; // Keep alpha
     }
 
     // For extra particles, sample from existing white/text positions
@@ -1144,11 +1191,11 @@ function createInterpolatedSequenceData(sequenceData, maxCount) {
         uvs[particleIndex * 2] = originalUvs[sourceIndex * 2];
         uvs[particleIndex * 2 + 1] = originalUvs[sourceIndex * 2 + 1];
 
-        // Copy color from the source particle as well
-        colors[particleIndex * 4] = originalColors[sourceIndex * 4];
-        colors[particleIndex * 4 + 1] = originalColors[sourceIndex * 4 + 1];
-        colors[particleIndex * 4 + 2] = originalColors[sourceIndex * 4 + 2];
-        colors[particleIndex * 4 + 3] = originalColors[sourceIndex * 4 + 3];
+        // Set to white
+        colors[particleIndex * 4] = 255;
+        colors[particleIndex * 4 + 1] = 255;
+        colors[particleIndex * 4 + 2] = 255;
+        colors[particleIndex * 4 + 3] = originalColors[sourceIndex * 4 + 3]; // Keep alpha
       }
     }
 
@@ -1607,6 +1654,285 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
   mesh.frustumCulled = false;
 
   console.log(`Instanced particles created: ${count} instances`);
+
+  return mesh;
+}
+
+function makeTurbulentParticles(count) {
+  // Create a single plane geometry that will be instanced
+  const planeGeom = new THREE.PlaneGeometry(1, 1);
+
+  // Create instanced buffer geometry
+  const geometry = new THREE.InstancedBufferGeometry();
+  geometry.index = planeGeom.index;
+  geometry.attributes.position = planeGeom.attributes.position;
+  geometry.attributes.uv = planeGeom.attributes.uv;
+
+  // Add instance attributes
+  // Random UVs since they don't affect turbulent particles
+  const uvs = new Float32Array(count * 2);
+  for (let i = 0; i < count; i++) {
+    uvs[i * 2] = Math.random();
+    uvs[i * 2 + 1] = Math.random();
+  }
+  geometry.setAttribute('aInstanceUV', new THREE.InstancedBufferAttribute(uvs, 2));
+
+  // White colors
+  const colors = new Uint8Array(count * 4);
+  for (let i = 0; i < count; i++) {
+    colors[i * 4] = 255; // White R
+    colors[i * 4 + 1] = 255; // White G
+    colors[i * 4 + 2] = 255; // White B
+    colors[i * 4 + 3] = 255; // Full alpha
+  }
+  geometry.setAttribute('aInstanceColor', new THREE.InstancedBufferAttribute(colors, 4, true));
+
+  // Add separate target UV coordinates (same as instance for turbulent)
+  geometry.setAttribute('aTargetUV', new THREE.InstancedBufferAttribute(new Float32Array(uvs), 2));
+
+  // Random start positions
+  const aStart = new Float32Array(count * 3);
+  for (let i = 0; i < count; i++) {
+    const r = 2.5 * Math.cbrt(Math.random());
+    const th = Math.random() * Math.PI * 2;
+    const ph = Math.acos(2 * Math.random() - 1);
+    aStart[i * 3 + 0] = r * Math.sin(ph) * Math.cos(th);
+    aStart[i * 3 + 1] = r * Math.sin(ph) * Math.sin(th);
+    aStart[i * 3 + 2] = r * Math.cos(ph);
+  }
+  geometry.setAttribute('aInstanceStart', new THREE.InstancedBufferAttribute(aStart, 3));
+
+  // Fade system attributes - always visible
+  const aOpacity = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    aOpacity[i] = 1.0;
+  }
+  geometry.setAttribute('aOpacity', new THREE.InstancedBufferAttribute(aOpacity, 1));
+
+  const aTargetOpacity = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    aTargetOpacity[i] = 1.0;
+  }
+  geometry.setAttribute('aTargetOpacity', new THREE.InstancedBufferAttribute(aTargetOpacity, 1));
+
+  // Fade speed (dummy)
+  const aFadeSpeed = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    aFadeSpeed[i] = 1.0;
+  }
+  geometry.setAttribute('aFadeSpeed', new THREE.InstancedBufferAttribute(aFadeSpeed, 1));
+
+  // Movement system attributes - always at progress 0
+  const aProgress = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    aProgress[i] = 0.0; // Always turbulent
+  }
+  geometry.setAttribute('aProgress', new THREE.InstancedBufferAttribute(aProgress, 1));
+
+  const aTargetProgress = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    aTargetProgress[i] = 0.0; // Never move to target
+  }
+  geometry.setAttribute('aTargetProgress', new THREE.InstancedBufferAttribute(aTargetProgress, 1));
+
+  // Move speed (dummy)
+  const aMoveSpeed = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    aMoveSpeed[i] = 1.0;
+  }
+  geometry.setAttribute('aMoveSpeed', new THREE.InstancedBufferAttribute(aMoveSpeed, 1));
+
+  // Random particle sizes
+  const aRandomSize = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const t = Math.random();
+    aRandomSize[i] = params.particleSizeMin + t * (params.particleSizeMax - params.particleSizeMin);
+  }
+  geometry.setAttribute('aRandomSize', new THREE.InstancedBufferAttribute(aRandomSize, 1));
+
+  // Drag system attributes
+  const aPrevCameraY = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    aPrevCameraY[i] = 0.0;
+  }
+  geometry.setAttribute('aPrevCameraY', new THREE.InstancedBufferAttribute(aPrevCameraY, 1));
+
+  const aDragSpeed = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    aDragSpeed[i] = 1.0;
+  }
+  geometry.setAttribute('aDragSpeed', new THREE.InstancedBufferAttribute(aDragSpeed, 1));
+
+  // Particle order (dummy, since always visible and at progress 0)
+  const particleOrderVisibility = new Float32Array(count);
+  const particleOrderMovement = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    particleOrderVisibility[i] = 0.0;
+    particleOrderMovement[i] = 0.0;
+  }
+  geometry.setAttribute('aParticleOrderVisibility', new THREE.InstancedBufferAttribute(particleOrderVisibility, 1));
+  geometry.setAttribute('aParticleOrderMovement', new THREE.InstancedBufferAttribute(particleOrderMovement, 1));
+
+  const uniforms = {
+    uTime: { value: 0 },
+    uPlane: { value: new THREE.Vector2(1, 1) },
+    uImgAspect: { value: 1 }, // dummy
+    uParticleSizeTarget: { value: params.particleSizeTarget },
+    uSoftness: { value: params.softness },
+    uEdgeFade: { value: params.edgeFade },
+    uTurbulence1Amount: { value: params.turbulence1Amount },
+    uTurbulence1Speed: { value: params.turbulence1Speed },
+    uTurbulence1Scale: { value: params.turbulence1Scale },
+    uTurbulence1Evolution: { value: params.turbulence1Evolution },
+    uTurbulence2Amount: { value: params.turbulence2Amount },
+    uTurbulence2Speed: { value: params.turbulence2Speed },
+    uTurbulence2Scale: { value: params.turbulence2Scale },
+    uTurbulence2Evolution: { value: params.turbulence2Evolution },
+    uVisiblePercentage: { value: 1.0 }, // always visible
+    uMovePercentage: { value: 0.0 }, // never move
+    uDragAmount: { value: params.dragAmount },
+    uDeltaTime: { value: 0 },
+    uSequenceOffset: { value: 0 },
+    uCameraY: { value: 0 }
+  };
+
+  const vertexShader = `
+    attribute vec2 aInstanceUV;
+    attribute vec2 aTargetUV;
+    attribute vec3 aInstanceStart;
+    attribute vec4 aInstanceColor;
+    attribute float aOpacity;
+    attribute float aProgress;
+    attribute float aRandomSize;
+    attribute float aPrevCameraY;
+    attribute float aDragSpeed;
+
+    varying vec4 vColor;
+    varying vec2 vUv;
+    varying float vOpacity;
+
+    uniform float uTime;
+    uniform float uImgAspect;
+    uniform vec2 uPlane;
+    uniform float uParticleSizeTarget;
+    uniform float uTurbulence1Amount;
+    uniform float uTurbulence1Speed;
+    uniform float uTurbulence1Scale;
+    uniform float uTurbulence1Evolution;
+    uniform float uTurbulence2Amount;
+    uniform float uTurbulence2Speed;
+    uniform float uTurbulence2Scale;
+    uniform float uTurbulence2Evolution;
+    uniform float uDragAmount;
+    uniform float uSequenceOffset;
+    uniform float uCameraY;
+
+    vec3 n3(vec3 p){
+      return vec3(
+        sin(p.x + 1.7) + sin(p.y*1.3 + 2.1) + sin(p.z*0.7 + 4.2),
+        sin(p.x*0.9 + 3.4) + sin(p.y + 5.2) + sin(p.z*1.1 + 1.3),
+        sin(p.x*1.2 + 2.7) + sin(p.y*0.8 + 6.1) + sin(p.z + 0.9)
+      ) * 0.33;
+    }
+
+    void main(){
+      vColor = aInstanceColor;
+      vUv = uv;
+      vOpacity = aOpacity;
+
+      // Map target UV to image plane (for target position)
+      float planeAspect = uPlane.x / uPlane.y;
+      vec2 p = aTargetUV * 2.0 - 1.0;
+
+      if (planeAspect > uImgAspect) {
+        p.x *= (uImgAspect / planeAspect);
+      } else {
+        p.y *= (planeAspect / uImgAspect);
+      }
+
+
+      vec3 target = vec3(p * uPlane * 0.45, 0.0);
+
+      // Offset target position based on sequence index to match texture plane positions
+      target.y += uSequenceOffset;
+
+      // Two layers of turbulence with evolution
+      vec3 start = aInstanceStart;
+
+      // First turbulence layer - evolves through noise space
+      vec3 noiseCoord1 = start * uTurbulence1Scale + vec3(0.0, 0.0, uTime * uTurbulence1Evolution);
+      vec3 wobble1 = n3(noiseCoord1 + uTime * uTurbulence1Speed) * uTurbulence1Amount;
+
+      // Second turbulence layer - different scale and evolution
+      vec3 noiseCoord2 = start * uTurbulence2Scale + vec3(0.0, 0.0, uTime * uTurbulence2Evolution);
+      vec3 wobble2 = n3(noiseCoord2 * 1.7 + uTime * uTurbulence2Speed + 100.0) * uTurbulence2Amount;
+
+      vec3 turbulent = start + wobble1 + wobble2;
+
+      // Calculate dragged camera Y
+      float draggedCameraY = mix(aPrevCameraY, uCameraY, uDragAmount);
+
+      // Interpolate between turbulent and target positions FIRST
+      vec3 instancePos = mix(turbulent, target, aProgress);
+
+      // THEN apply camera Y influence to the interpolated position
+      // When aProgress=0: particles follow camera Y movement (full influence)
+      // When aProgress=1: particles ignore camera Y (no influence, stay at target)
+      float cameraYInfluence = 1.0 - aProgress;
+      instancePos.y += draggedCameraY * cameraYInfluence;
+
+      // Interpolate particle size based on progress
+      float particleSize = mix(aRandomSize, uParticleSizeTarget, aProgress);
+
+      // Billboard the particle to face camera
+      vec4 mvPosition = modelViewMatrix * vec4(instancePos, 1.0);
+      mvPosition.xyz += position * particleSize;
+
+      gl_Position = projectionMatrix * mvPosition;
+    }
+  `;
+
+  const fragmentShader = `
+    varying vec4 vColor;
+    varying vec2 vUv;
+    varying float vOpacity;
+
+    uniform float uSoftness;
+    uniform float uEdgeFade;
+
+    void main(){
+      // Create circular particle
+      vec2 center = vUv - 0.5;
+      float dist = length(center) * 2.0;
+
+      // Controllable soft edge - uSoftness controls where fade starts (0 = very soft, 1 = hard edge)
+      float fadeStart = mix(0.0, 0.95, uSoftness);
+      float fadeEnd = mix(fadeStart + 0.05, 1.0, uEdgeFade);
+
+      float alpha = (1.0 - smoothstep(fadeStart, fadeEnd, dist)) * vOpacity;
+
+      // Premultiply alpha for correct blending
+      gl_FragColor = vec4(vColor.rgb * alpha, alpha);
+    }
+  `;
+
+  const material = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader,
+    fragmentShader,
+    transparent: true,
+    depthWrite: false, // Always false for proper soft particles
+    depthTest: true,
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneMinusSrcAlphaFactor
+  });
+
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.frustumCulled = false;
+
+  console.log(`Turbulent particles created: ${count} instances`);
 
   return mesh;
 }
@@ -2251,6 +2577,22 @@ function applyAllParams() {
   uniforms.uVisiblePercentage.value = params.visiblePercentage;
   uniforms.uMovePercentage.value = params.movePercentage;
 
+  // Apply to turbulent particles too
+  if (turbulentUniforms) {
+    turbulentUniforms.uParticleSizeTarget.value = params.particleSizeTarget;
+    turbulentUniforms.uSoftness.value = params.softness;
+    turbulentUniforms.uEdgeFade.value = params.edgeFade;
+    turbulentUniforms.uTurbulence1Amount.value = params.turbulence1Amount;
+    turbulentUniforms.uTurbulence1Speed.value = params.turbulence1Speed;
+    turbulentUniforms.uTurbulence1Scale.value = params.turbulence1Scale;
+    turbulentUniforms.uTurbulence1Evolution.value = params.turbulence1Evolution;
+    turbulentUniforms.uTurbulence2Amount.value = params.turbulence2Amount;
+    turbulentUniforms.uTurbulence2Speed.value = params.turbulence2Speed;
+    turbulentUniforms.uTurbulence2Scale.value = params.turbulence2Scale;
+    turbulentUniforms.uTurbulence2Evolution.value = params.turbulence2Evolution;
+    turbulentUniforms.uDragAmount.value = params.dragAmount;
+  }
+
   // Apply other params
   renderer.setClearColor(params.backgroundColor);
 
@@ -2258,23 +2600,38 @@ function applyAllParams() {
   switch (params.blendMode) {
     case 'additive':
       particles.material.blending = THREE.AdditiveBlending;
+      if (turbulentParticles) turbulentParticles.material.blending = THREE.AdditiveBlending;
       break;
     case 'screen':
       particles.material.blending = THREE.CustomBlending;
       particles.material.blendEquation = THREE.AddEquation;
       particles.material.blendSrc = THREE.OneFactor;
       particles.material.blendDst = THREE.OneFactor;
+      if (turbulentParticles) {
+        turbulentParticles.material.blending = THREE.CustomBlending;
+        turbulentParticles.material.blendEquation = THREE.AddEquation;
+        turbulentParticles.material.blendSrc = THREE.OneFactor;
+        turbulentParticles.material.blendDst = THREE.OneFactor;
+      }
       break;
     case 'normal':
       particles.material.blending = THREE.NormalBlending;
+      if (turbulentParticles) turbulentParticles.material.blending = THREE.NormalBlending;
       break;
     default: // premultiplied
       particles.material.blending = THREE.CustomBlending;
       particles.material.blendEquation = THREE.AddEquation;
       particles.material.blendSrc = THREE.OneFactor;
       particles.material.blendDst = THREE.OneMinusSrcAlphaFactor;
+      if (turbulentParticles) {
+        turbulentParticles.material.blending = THREE.CustomBlending;
+        turbulentParticles.material.blendEquation = THREE.AddEquation;
+        turbulentParticles.material.blendSrc = THREE.OneFactor;
+        turbulentParticles.material.blendDst = THREE.OneMinusSrcAlphaFactor;
+      }
   }
   particles.material.needsUpdate = true;
+  if (turbulentParticles) turbulentParticles.material.needsUpdate = true;
 
   // Update frame visibility
   if (window.frame) {
@@ -2304,6 +2661,18 @@ function applyAnimatableParams() {
   uniforms.uTurbulence2Evolution.value = params.turbulence2Evolution;
   uniforms.uVisiblePercentage.value = params.visiblePercentage;
   uniforms.uMovePercentage.value = params.movePercentage;
+
+  // Apply to turbulent particles too
+  if (turbulentUniforms) {
+    turbulentUniforms.uTurbulence1Amount.value = params.turbulence1Amount;
+    turbulentUniforms.uTurbulence1Speed.value = params.turbulence1Speed;
+    turbulentUniforms.uTurbulence1Scale.value = params.turbulence1Scale;
+    turbulentUniforms.uTurbulence1Evolution.value = params.turbulence1Evolution;
+    turbulentUniforms.uTurbulence2Amount.value = params.turbulence2Amount;
+    turbulentUniforms.uTurbulence2Speed.value = params.turbulence2Speed;
+    turbulentUniforms.uTurbulence2Scale.value = params.turbulence2Scale;
+    turbulentUniforms.uTurbulence2Evolution.value = params.turbulence2Evolution;
+  }
 
   // Update particle targets for visibility and movement
   updateParticleTargets(particles.geometry);
