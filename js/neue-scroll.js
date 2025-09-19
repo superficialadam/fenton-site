@@ -159,10 +159,11 @@ async function init() {
   uniforms = particles.material.uniforms;
   uniforms.uPlane.value.copy(planeSizeAtZ0());
   
-  // Initialize sequence offset for the initial sequence
+  // Initialize sequence offset for the initial sequence (compressed spacing)
   const planeSize = planeSizeAtZ0();
   const sectionSpacing = planeSize.y;
-  uniforms.uSequenceOffset.value = -sectionSpacing * params.sequenceIndex;
+  const initialIndex = params.sequenceIndex;
+  uniforms.uSequenceOffset.value = initialIndex <= 1 ? 0 : -sectionSpacing * (initialIndex - 1);
 
   // Frame helper
   const frame = makeFrameHelper(uniforms.uPlane.value, initialData.wCells / initialData.hCells);
@@ -271,8 +272,8 @@ function updateTexturePlanePositions() {
   const baseScale = Math.min(planeSize.x / 12, planeSize.y / 8); // Original planes were 12x8
   
   texturePlanes.forEach((plane, index) => {
-    // Position planes to match HTML sections (one section spacing each)
-    plane.position.y = -sectionSpacing * index;
+    // Compressed spacing: section1=0, section2=0, section3=-1*spacing, section4=-2*spacing, section5=-3*spacing
+    plane.position.y = index <= 1 ? 0 : -sectionSpacing * (index - 1);
     
     // Scale the plane itself
     plane.scale.set(baseScale, baseScale, 1);
@@ -280,7 +281,8 @@ function updateTexturePlanePositions() {
   
   // Update sequence offset for current sequence
   if (uniforms && uniforms.uSequenceOffset) {
-    uniforms.uSequenceOffset.value = -sectionSpacing * params.sequenceIndex;
+    const currentIndex = params.sequenceIndex;
+    uniforms.uSequenceOffset.value = currentIndex <= 1 ? 0 : -sectionSpacing * (currentIndex - 1);
   }
 }
 
@@ -321,13 +323,13 @@ async function createTexturePlanes() {
   const planeSize = planeSizeAtZ0();
   const sectionSpacing = planeSize.y; // Each section is one viewport height
   
-  // Define texture configurations - position to match HTML sections
+  // Define texture configurations - compressed spacing (move everything up one step except first)
   const textureConfigs = [
-    { file: './public/new/section1.png', position: 0, z: 0 },                    // hero section
-    { file: './public/new/section2.png', position: -sectionSpacing, z: 0 },      // section-2
-    { file: './public/new/section3.png', position: -sectionSpacing * 2, z: 0 },  // section-3
-    { file: './public/new/section4.png', position: -sectionSpacing * 3, z: 0 },  // section-4
-    { file: './public/new/section5.png', position: -sectionSpacing * 4, z: 0 }   // section-5
+    { file: './public/new/section1.png', position: 0, z: 0 },                    // stays at 0
+    { file: './public/new/section2.png', position: 0, z: 0 },                    // moved up to 0 (same as section1)
+    { file: './public/new/section3.png', position: -sectionSpacing, z: 0 },      // moved up to -1*spacing
+    { file: './public/new/section4.png', position: -sectionSpacing * 2, z: 0 },  // moved up to -2*spacing
+    { file: './public/new/section5.png', position: -sectionSpacing * 3, z: 0 }   // moved up to -3*spacing
   ];
 
   // Load all textures
@@ -1388,9 +1390,10 @@ function switchToSequence(newIndex) {
   // uniforms.uImgAspect.value remains the same for all sequences
 
   // Update sequence offset to position particles at the correct texture plane location
+  // Compressed spacing: section1=0, section2=0, section3=-1*spacing, section4=-2*spacing, section5=-3*spacing
   const planeSize = planeSizeAtZ0();
   const sectionSpacing = planeSize.y;
-  const sequenceOffset = -sectionSpacing * newIndex; // Each sequence offset by one section
+  const sequenceOffset = newIndex <= 1 ? 0 : -sectionSpacing * (newIndex - 1); // Move everything up one step except first
   uniforms.uSequenceOffset.value = sequenceOffset;
 
   const originalCount = newSequence.originalCount || newSequence.count;
