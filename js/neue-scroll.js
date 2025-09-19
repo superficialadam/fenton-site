@@ -33,12 +33,12 @@ const animationSystem = {
 const params = {
   particleSizeMin: 0.01, // Random size min
   particleSizeMax: 0.03, // Random size max
-  particleSizeTarget: 0.015, // Fixed size at target
-  movePercentage: 0.0, // 0-1, percentage of particles that should move to target
+  particleSizeTarget: 0.03, // Fixed size at target
+  movePercentage: 1.0, // 0-1, percentage of particles that should move to target (start with step2 visible)
   orderingMode: 'random', // 'islands', 'random', 'radial', 'grid', 'spiral', 'horizontal', 'vertical'
   orderingScale: 1.0, // Scale of the ordering pattern
-  sequenceIndex: 0, // 0-4, which sequence step to target
-  turbulence1Amount: 1.2,
+  sequenceIndex: 1, // 0-4, which sequence step to target (start with step2)
+  turbulence1Amount: 3.23,
   turbulence1Speed: 0.6,
   turbulence1Scale: 0.9,
   turbulence1Evolution: 0.3, // Speed of moving through noise
@@ -46,28 +46,28 @@ const params = {
   turbulence2Speed: 0.3,
   turbulence2Scale: 2.0,
   turbulence2Evolution: 0.2,
-  softness: 0.2, // 0 = very soft, 1 = hard edge
-  edgeFade: 0.5, // Controls fade range
+  softness: 1.0, // 0 = very soft, 1 = hard edge
+  edgeFade: 0.3, // Controls fade range
   visiblePercentage: 1.0, // 0-1, percentage of particles that should be visible
   fadeSpeedMin: 30, // Min frames to fade (30 = 0.5 sec at 60fps)
-  fadeSpeedMax: 120, // Max frames to fade (120 = 2 sec at 60fps)
+  fadeSpeedMax: 90, // Max frames to fade (90 = 1.5 sec at 60fps)
   moveSpeedMin: 60, // Min frames to reach target position
   moveSpeedMax: 180, // Max frames to reach target position
   dragAmount: 0.05, // Amount of drag applied to particles
   dragSpeedMin: 30, // Min frames for drag catchup
   dragSpeedMax: 120, // Max frames for drag catchup
-  backgroundColor: '#111111',
-  blendMode: 'premultiplied',
+  backgroundColor: '#0a0a0a',
+  blendMode: 'additive',
   depthWrite: false,
-  showFrame: true,
+  showFrame: false,
 
   // Scroll camera controls
   cameraOffsetX: 0.0,
   cameraOffsetY: 0.0,
   cameraOffsetZ: 6.0,
   cameraFOV: 70,
-  scrollMultiplier: 0.001, // Will be calculated automatically
-  scrollDamping: 0.01
+  scrollMultiplier: 0.01, // Scroll multiplier
+  scrollDamping: 0.05
 };
 
 let renderer, scene, camera, particles, uniforms, clock, gui, guiNeedsUpdate = false;
@@ -234,10 +234,204 @@ function setupScrollListener() {
     scrollY = window.scrollY;
     // Inverted scroll: negative scroll value moves camera up
     targetCameraY = params.cameraOffsetY - (scrollY * 0.0086);
+
+    // Update scroll-based transitions
+    updateScrollTransitions();
+
+    // Check if pending sequence switch can be executed
+    checkPendingSequenceSwitch();
   };
 
   window.addEventListener('scroll', updateScroll, { passive: true });
   updateScroll(); // Initialize
+}
+
+// Scroll transition state tracking
+let currentScrollState = null;
+let disperseStartTime = null; // Track when particles started dispersing
+let pendingSequenceSwitch = null; // Queue sequence switch for after dispersion
+
+// Scroll-based transition system
+function updateScrollTransitions() {
+  // Get section elements
+  const heroSection = document.getElementById('hero');
+  const section2 = document.getElementById('section-2');
+  const section3 = document.getElementById('section-3');
+  const section4 = document.getElementById('section-4');
+
+  if (!heroSection || !section2 || !section3 || !section4) {
+    console.warn('Some sections not found for scroll transitions');
+    return;
+  }
+
+  // Get section positions
+  const heroRect = heroSection.getBoundingClientRect();
+  const section2Rect = section2.getBoundingClientRect();
+  const section3Rect = section3.getBoundingClientRect();
+  const section4Rect = section4.getBoundingClientRect();
+
+  const viewportHeight = window.innerHeight;
+  const enterThreshold = viewportHeight * 0.35; // 35% down from top
+  const leaveThreshold = viewportHeight * 0.65; // 65% down from top
+
+  let newState = null;
+
+  // Proper transition states with timing consideration
+  // Each section is 100vh, so we need:
+  // - "in-section" when section is centered in viewport
+  // - "leaving-section" when 65% past section (disperse starts)
+  // - "between-sections" when fully between (safe to switch targets)
+  // - "entering-section" when 35% into next section (form new target)
+
+  // Calculate section scroll percentage based on journey through viewport
+  const getSectionPercent = (rect) => {
+    // 0% = section.top just touches bottom of viewport (rect.top = viewportHeight)
+    // 100% = section.bottom just touches top of viewport (rect.bottom = 0)
+    // Total journey = viewportHeight + rect.height
+
+    const totalJourney = viewportHeight + rect.height;
+    const traveledDistance = viewportHeight - rect.top;
+    const percent = (traveledDistance / totalJourney) * 100;
+
+    return Math.max(0, Math.min(100, percent));
+  };
+
+  const heroPercent = getSectionPercent(heroRect);
+  const sec2Percent = getSectionPercent(section2Rect);
+  const sec3Percent = getSectionPercent(section3Rect);
+  const sec4Percent = getSectionPercent(section4Rect);
+
+  // Determine state based on scroll percentages
+  // 35% = particles gather at this section's target
+  // 60% = particles disperse from this section
+
+  if (sec4Percent >= 35 && sec4Percent < 60) {
+    newState = 'in-section4'; // Section 4 active (35-60%) - Step 5
+  } else if (sec4Percent >= 60) {
+    newState = 'leaving-section4'; // Leaving section 4 (60%+) - disperse
+  } else if (sec3Percent >= 35 && sec3Percent < 60) {
+    newState = 'in-section3'; // Section 3 active (35-60%) - Step 4
+  } else if (sec3Percent >= 60) {
+    newState = 'leaving-section3'; // Leaving section 3 (60%+) - disperse
+  } else if (sec2Percent >= 35 && sec2Percent < 60) {
+    newState = 'in-section2'; // Section 2 active (35-60%) - Step 3
+  } else if (sec2Percent >= 60) {
+    newState = 'leaving-section2'; // Leaving section 2 (60%+) - disperse
+  } else if (heroPercent >= 35 && heroPercent < 60) {
+    newState = 'in-hero'; // Hero active (35-60%) - Step 2
+  } else if (heroPercent >= 60) {
+    newState = 'leaving-hero'; // Leaving hero (60%+) - disperse
+  } else {
+    newState = 'dispersed'; // Between sections - particles dispersed
+  }
+
+  // Debug EVERY scroll event to see what's happening
+  console.log(`SCROLL DEBUG:`);
+  console.log(`  ScrollY: ${window.scrollY}`);
+  console.log(`  Viewport: ${viewportHeight}px`);
+  console.log(`  Enter threshold (35%): ${enterThreshold.toFixed(0)}px`);
+  console.log(`  Leave threshold (65%): ${leaveThreshold.toFixed(0)}px`);
+  console.log(`  Hero: top=${heroRect.top.toFixed(0)} bottom=${heroRect.bottom.toFixed(0)} height=${heroRect.height.toFixed(0)}`);
+  console.log(`  Sec2: top=${section2Rect.top.toFixed(0)} bottom=${section2Rect.bottom.toFixed(0)} height=${section2Rect.height.toFixed(0)}`);
+  console.log(`  Sec3: top=${section3Rect.top.toFixed(0)} bottom=${section3Rect.bottom.toFixed(0)} height=${section3Rect.height.toFixed(0)}`);
+  console.log(`  Sec4: top=${section4Rect.top.toFixed(0)} bottom=${section4Rect.bottom.toFixed(0)} height=${section4Rect.height.toFixed(0)}`);
+  console.log(`  Calculated state: ${newState}`);
+
+  // Debug log state changes
+  if (newState !== currentScrollState) {
+    console.log(`*** SCROLL STATE CHANGED: ${currentScrollState} → ${newState} ***`);
+
+    currentScrollState = newState;
+
+    switch (newState) {
+      // IN SECTION STATES - particles should form at this section's target (sequence already switched)
+      case 'in-hero':
+        updateParticleParams(1.0, 1.0, 1); // Step 2 (index 1) - particles form at hero target
+        break;
+      case 'in-section2':
+        updateParticleParams(1.0, 1.0, 2); // Step 3 (index 2) - particles form at section2 target
+        break;
+      case 'in-section3':
+        updateParticleParams(1.0, 1.0, 3); // Step 4 (index 3) - particles form at section3 target
+        break;
+      case 'in-section4':
+        updateParticleParams(1.0, 1.0, 4); // Step 5 (index 4) - particles form at section4 target
+        break;
+
+      // LEAVING SECTION STATES - disperse particles only, do NOT change sequence
+      case 'leaving-hero':
+        updateParticleParams(0.0, 0.22, null); // Disperse only, keep current sequence
+        break;
+      case 'leaving-section2':
+        updateParticleParams(0.0, 0.22, null); // Disperse only, keep current sequence
+        break;
+      case 'leaving-section3':
+        updateParticleParams(0.0, 0.22, null); // Disperse only, keep current sequence
+        break;
+      case 'leaving-section4':
+        updateParticleParams(0.0, 0.22, null); // Disperse only, keep current sequence
+        break;
+
+      // DISPERSED STATE - particles scattered between sections
+      case 'dispersed':
+        updateParticleParams(0.0, 0.22, null); // Keep dispersed
+        break;
+    }
+  }
+}
+
+// Check if we can execute a pending sequence switch
+function checkPendingSequenceSwitch() {
+  if (pendingSequenceSwitch !== null && disperseStartTime !== null) {
+    const timeSinceDisperse = Date.now() - disperseStartTime;
+
+    if (timeSinceDisperse >= 3000) { // 3 seconds have passed
+      console.log(`Executing pending sequence switch to ${pendingSequenceSwitch} (${timeSinceDisperse}ms since dispersion)`);
+      params.sequenceIndex = pendingSequenceSwitch;
+      switchToSequence(pendingSequenceSwitch);
+      disperseStartTime = null; // Reset timer
+      pendingSequenceSwitch = null; // Clear pending switch
+    }
+  }
+}
+
+// Helper function to update particle parameters
+function updateParticleParams(movePercentage, visiblePercentage, sequenceIndex) {
+  // Handle movePercentage changes
+  if (movePercentage !== null) {
+    params.movePercentage = movePercentage;
+    if (uniforms) uniforms.uMovePercentage.value = movePercentage;
+    if (particles) updateMovementTargets(particles.geometry);
+
+    // Track when particles start dispersing
+    if (movePercentage === 0.0) {
+      disperseStartTime = Date.now();
+      console.log('Particles started dispersing - waiting 3 seconds before allowing sequence switch');
+    }
+  }
+
+  if (visiblePercentage !== null) {
+    params.visiblePercentage = visiblePercentage;
+    if (uniforms) uniforms.uVisiblePercentage.value = visiblePercentage;
+    if (particles) updateParticleTargets(particles.geometry);
+  }
+
+  // Handle sequence switching with 3-second delay protection
+  if (sequenceIndex !== null && sequenceIndex !== params.sequenceIndex) {
+    const timeSinceDisperse = disperseStartTime ? (Date.now() - disperseStartTime) : 9999;
+
+    if (timeSinceDisperse >= 3000) { // 3 seconds have passed - safe to switch
+      console.log(`Switching sequence from ${params.sequenceIndex} to ${sequenceIndex} (dispersed for ${timeSinceDisperse}ms)`);
+      params.sequenceIndex = sequenceIndex;
+      switchToSequence(sequenceIndex);
+      disperseStartTime = null; // Reset timer
+      pendingSequenceSwitch = null; // Clear any pending switch
+    } else {
+      // Queue the switch for later
+      console.log(`Sequence switch queued - only ${timeSinceDisperse}ms since dispersion (need 3000ms). Queuing switch to ${sequenceIndex}`);
+      pendingSequenceSwitch = sequenceIndex;
+    }
+  }
 }
 
 // Create debug info display
@@ -258,11 +452,62 @@ function createDebugInfo() {
 // Update debug info
 function updateDebugInfo() {
   if (debugInfo) {
+    // Get section info for debug
+    const heroSection = document.getElementById('hero');
+    const section2 = document.getElementById('section-2');
+    const section3 = document.getElementById('section-3');
+    const section4 = document.getElementById('section-4');
+
+    let sectionInfo = '';
+    if (heroSection && section2 && section3 && section4) {
+      const heroRect = heroSection.getBoundingClientRect();
+      const section2Rect = section2.getBoundingClientRect();
+      const section3Rect = section3.getBoundingClientRect();
+      const section4Rect = section4.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+
+      // Calculate section scroll percentage based on journey through viewport
+      const getSectionPercent = (rect) => {
+        // 0% = section.top just touches bottom of viewport (rect.top = viewportHeight)
+        // 100% = section.bottom just touches top of viewport (rect.bottom = 0)
+        // Total journey = viewportHeight + rect.height
+
+        const totalJourney = viewportHeight + rect.height;
+        const traveledDistance = viewportHeight - rect.top;
+        const percent = (traveledDistance / totalJourney) * 100;
+
+        return Math.max(0, Math.min(100, percent));
+      };
+
+      const heroPercent = getSectionPercent(heroRect);
+      const sec2Percent = getSectionPercent(section2Rect);
+      const sec3Percent = getSectionPercent(section3Rect);
+      const sec4Percent = getSectionPercent(section4Rect);
+
+      // Determine which section we're primarily in
+      let currentSection = 'none';
+      if (heroRect.top >= -heroRect.height && heroRect.top <= 0) currentSection = 'HERO';
+      else if (section2Rect.top >= -section2Rect.height && section2Rect.top <= 0) currentSection = 'SECTION-2';
+      else if (section3Rect.top >= -section3Rect.height && section3Rect.top <= 0) currentSection = 'SECTION-3';
+      else if (section4Rect.top >= -section4Rect.height && section4Rect.top <= 0) currentSection = 'SECTION-4';
+
+      sectionInfo = `<br>
+        <strong>SECTION SCROLL PROGRESS:</strong><br>
+        Hero: ${heroPercent.toFixed(1)}% (top=${heroRect.top.toFixed(0)})<br>
+        Sec2: ${sec2Percent.toFixed(1)}% (top=${section2Rect.top.toFixed(0)})<br>
+        Sec3: ${sec3Percent.toFixed(1)}% (top=${section3Rect.top.toFixed(0)})<br>
+        Sec4: ${sec4Percent.toFixed(1)}% (top=${section4Rect.top.toFixed(0)})<br>
+        <strong>State: ${currentScrollState || 'none'}</strong><br>
+        Move%: ${params.movePercentage.toFixed(2)} Vis%: ${params.visiblePercentage.toFixed(2)} Seq: ${params.sequenceIndex}
+      `;
+    } else {
+      sectionInfo = `<br>SECTIONS NOT FOUND`;
+    }
+
     debugInfo.innerHTML = `
+      <strong>SCROLL DEBUG</strong><br>
       Scroll Y: ${scrollY}<br>
-      Camera Y: ${camera.position.y.toFixed(2)}<br>
-      Target Camera Y: ${targetCameraY.toFixed(2)}<br>
-      Scroll Multiplier: ${params.scrollMultiplier}
+      Camera Y: ${camera.position.y.toFixed(2)}${sectionInfo}
     `;
   }
 }
@@ -801,16 +1046,7 @@ function exportConfig() {
 
 async function loadConfig(url) {
   try {
-    // First try localStorage
-    const stored = localStorage.getItem('particleConfig');
-    if (stored) {
-      const config = JSON.parse(stored);
-      Object.assign(params, config);
-      console.log('Loaded config from localStorage');
-      return;
-    }
-
-    // Then try file
+    // Try to load from file only (removed localStorage autoloading)
     const response = await fetch(url);
     if (response.ok) {
       const config = await response.json();
