@@ -53,6 +53,9 @@ const params = {
   fadeSpeedMax: 120, // Max frames to fade (120 = 2 sec at 60fps)
   moveSpeedMin: 60, // Min frames to reach target position
   moveSpeedMax: 180, // Max frames to reach target position
+  dragAmount: 0.05, // Amount of drag applied to particles
+  dragSpeedMin: 30, // Min frames for drag catchup
+  dragSpeedMax: 120, // Max frames for drag catchup
   backgroundColor: '#111111',
   blendMode: 'premultiplied',
   depthWrite: false,
@@ -212,9 +215,10 @@ async function init() {
     // Update animation system
     updateAnimation();
 
-    // Update particle visibility and movement
+    // Update particle visibility, movement, and drag
     updateParticleVisibility(particles.geometry, deltaTime);
     updateParticleMovement(particles.geometry, deltaTime);
+    updateParticleDrag(particles.geometry, deltaTime);
 
     renderer.render(scene, camera);
   });
@@ -438,6 +442,21 @@ function setupGUI(frame) {
     .name('Move Speed Max (frames)')
     .onChange(v => {
       updateMoveSpeeds(particles.geometry);
+    });
+  animFolder.add(params, 'dragAmount', 0, 1, 0.01)
+    .name('Drag Amount')
+    .onChange(v => {
+      uniforms.uDragAmount.value = v;
+    });
+  animFolder.add(params, 'dragSpeedMin', 1, 300, 1)
+    .name('Drag Speed Min (frames)')
+    .onChange(v => {
+      updateDragSpeeds(particles.geometry);
+    });
+  animFolder.add(params, 'dragSpeedMax', 1, 300, 1)
+    .name('Drag Speed Max (frames)')
+    .onChange(v => {
+      updateDragSpeeds(particles.geometry);
     });
   animFolder.open();
 
@@ -721,6 +740,7 @@ function setupGUI(frame) {
   uniforms.uTurbulence2Speed.value = params.turbulence2Speed;
   uniforms.uTurbulence2Scale.value = params.turbulence2Scale;
   uniforms.uTurbulence2Evolution.value = params.turbulence2Evolution;
+  uniforms.uDragAmount.value = params.dragAmount;
 
   // Add keyboard shortcuts
   let guiHidden = false;
@@ -1219,6 +1239,23 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
   }
   geometry.setAttribute('aRandomSize', new THREE.InstancedBufferAttribute(aRandomSize, 1));
 
+  // Drag system attributes
+  // Previous camera position for each particle (starts at 0)
+  const aPrevCameraY = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    aPrevCameraY[i] = 0.0;
+  }
+  geometry.setAttribute('aPrevCameraY', new THREE.InstancedBufferAttribute(aPrevCameraY, 1));
+
+  // Drag speed for each particle (deterministic based on index)
+  const aDragSpeed = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const t = seedRandom(i * 123.789 + 67.890); // Different seed for drag
+    const frames = params.dragSpeedMin + t * (params.dragSpeedMax - params.dragSpeedMin);
+    aDragSpeed[i] = 1.0 / frames;
+  }
+  geometry.setAttribute('aDragSpeed', new THREE.InstancedBufferAttribute(aDragSpeed, 1));
+
   const uniforms = {
     uTime: { value: 0 },
     uPlane: { value: new THREE.Vector2(1, 1) },
@@ -1236,6 +1273,7 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     uTurbulence2Evolution: { value: params.turbulence2Evolution },
     uVisiblePercentage: { value: params.visiblePercentage },
     uMovePercentage: { value: params.movePercentage },
+    uDragAmount: { value: params.dragAmount },
     uDeltaTime: { value: 0 },
     uSequenceOffset: { value: 0 },
     uCameraY: { value: 0 }
@@ -1249,6 +1287,8 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     attribute float aOpacity;
     attribute float aProgress;
     attribute float aRandomSize;
+    attribute float aPrevCameraY;
+    attribute float aDragSpeed;
     
     varying vec4 vColor;
     varying vec2 vUv;
@@ -1266,6 +1306,7 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     uniform float uTurbulence2Speed;
     uniform float uTurbulence2Scale;
     uniform float uTurbulence2Evolution;
+    uniform float uDragAmount;
     uniform float uSequenceOffset;
     uniform float uCameraY;
 
@@ -1310,11 +1351,15 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
       
       vec3 turbulent = start + wobble1 + wobble2;
 
-      // Apply camera Y tracking to turbulent position (keeps local offset)
-      // When aProgress is 0 (not moving to target), particles follow camera Y
+      // Apply dragged camera Y tracking to turbulent position (keeps local offset)
+      // When aProgress is 0 (not moving to target), particles follow camera Y with drag
       // When aProgress is 1 (moving to target), particles ignore camera Y tracking
       float cameraYInfluence = 1.0 - aProgress;
-      turbulent.y += uCameraY * cameraYInfluence;
+
+      // Apply drag: each particle catches up to camera Y at different speeds
+      // The drag creates a trailing effect where particles lag behind camera movement
+      float draggedCameraY = mix(aPrevCameraY, uCameraY, uDragAmount);
+      turbulent.y += draggedCameraY * cameraYInfluence;
 
       // Use per-particle progress (already smoothstepped in JavaScript)
       vec3 instancePos = mix(turbulent, target, aProgress);
@@ -1562,6 +1607,27 @@ function updateMoveSpeeds(geometry) {
   geometry.attributes.aMoveSpeed.needsUpdate = true;
 }
 
+// Update drag speeds when parameters change (keeps deterministic ratio)
+function updateDragSpeeds(geometry) {
+  const count = geometry.attributes.aDragSpeed.count;
+  const dragSpeed = geometry.attributes.aDragSpeed.array;
+
+  // Seeded random function
+  const seedRandom = (seed) => {
+    let x = Math.sin(seed) * 10000;
+    return x - Math.floor(x);
+  };
+
+  for (let i = 0; i < count; i++) {
+    // Use deterministic random based on particle index
+    const t = seedRandom(i * 123.789 + 67.890);
+    const frames = params.dragSpeedMin + t * (params.dragSpeedMax - params.dragSpeedMin);
+    dragSpeed[i] = 1.0 / frames;
+  }
+
+  geometry.attributes.aDragSpeed.needsUpdate = true;
+}
+
 // Update particle movement every frame with S-curve
 function updateParticleMovement(geometry, deltaTime) {
   const count = geometry.attributes.aProgress.count;
@@ -1630,6 +1696,35 @@ function updateParticleSizes(geometry) {
   }
 
   geometry.attributes.aRandomSize.needsUpdate = true;
+}
+
+// Update particle drag every frame - makes each particle catch up to camera Y at different speeds
+function updateParticleDrag(geometry, deltaTime) {
+  const count = geometry.attributes.aPrevCameraY.count;
+  const prevCameraY = geometry.attributes.aPrevCameraY.array;
+  const dragSpeed = geometry.attributes.aDragSpeed.array;
+
+  // Assuming 60 FPS for frame-based drag speed
+  const frameMultiplier = deltaTime * 60;
+
+  for (let i = 0; i < count; i++) {
+    // Each particle catches up to the current camera Y at its own speed
+    const diff = camera.position.y - prevCameraY[i];
+
+    if (Math.abs(diff) > 0.001) {
+      const step = dragSpeed[i] * frameMultiplier;
+
+      if (diff > 0) {
+        prevCameraY[i] = Math.min(prevCameraY[i] + step * Math.abs(diff), camera.position.y);
+      } else {
+        prevCameraY[i] = Math.max(prevCameraY[i] + step * diff, camera.position.y);
+      }
+    } else {
+      prevCameraY[i] = camera.position.y; // Sync when very close
+    }
+  }
+
+  geometry.attributes.aPrevCameraY.needsUpdate = true;
 }
 
 // Animation System Functions
