@@ -158,7 +158,7 @@ async function init() {
 
   uniforms = particles.material.uniforms;
   uniforms.uPlane.value.copy(planeSizeAtZ0());
-  
+
   // Initialize sequence offset for the initial sequence (compressed spacing)
   const planeSize = planeSizeAtZ0();
   const sectionSpacing = planeSize.y;
@@ -206,6 +206,9 @@ async function init() {
     // Update scroll-based camera movement
     updateScrollCamera(deltaTime);
 
+    // Update camera Y position for particle tracking
+    uniforms.uCameraY.value = camera.position.y;
+
     // Update animation system
     updateAnimation();
 
@@ -226,7 +229,7 @@ function setupScrollListener() {
   const updateScroll = () => {
     scrollY = window.scrollY;
     // Inverted scroll: negative scroll value moves camera up
-    targetCameraY = params.cameraOffsetY - (scrollY * params.scrollMultiplier);
+    targetCameraY = params.cameraOffsetY - (scrollY * 0.0086);
   };
 
   window.addEventListener('scroll', updateScroll, { passive: true });
@@ -263,22 +266,22 @@ function updateDebugInfo() {
 // Update texture plane sizes based on window size
 function updateTexturePlanePositions() {
   if (texturePlanes.length === 0) return;
-  
+
   // Get the visible plane size
   const planeSize = planeSizeAtZ0();
   const sectionSpacing = planeSize.y;
-  
+
   // Scale planes to fit the window properly
   const baseScale = Math.min(planeSize.x / 12, planeSize.y / 8); // Original planes were 12x8
-  
+
   texturePlanes.forEach((plane, index) => {
     // Compressed spacing: section1=0, section2=0, section3=-1*spacing, section4=-2*spacing, section5=-3*spacing
     plane.position.y = index <= 1 ? 0 : -sectionSpacing * (index - 1);
-    
+
     // Scale the plane itself
     plane.scale.set(baseScale, baseScale, 1);
   });
-  
+
   // Update sequence offset for current sequence
   if (uniforms && uniforms.uSequenceOffset) {
     const currentIndex = params.sequenceIndex;
@@ -289,40 +292,40 @@ function updateTexturePlanePositions() {
 // Create texture planes with additive blending
 async function createTexturePlanes() {
   const textureLoader = new THREE.TextureLoader();
-  
+
   // Get first and last section elements to calculate proper scroll multiplier
   const firstSection = document.getElementById('hero');
   const lastSection = document.getElementById('section-5');
-  
+
   if (firstSection && lastSection) {
     const firstSectionRect = firstSection.getBoundingClientRect();
     const lastSectionRect = lastSection.getBoundingClientRect();
-    
+
     const firstSectionCenter = firstSectionRect.top + (firstSectionRect.height / 2);
     const lastSectionCenter = lastSectionRect.top + (lastSectionRect.height / 2);
-    
+
     const totalScrollDistance = lastSectionCenter - firstSectionCenter;
-    
+
     // Calculate multiplier: first section center = camera Y = 0
     // Last section center should map to camera Y that fits in FOV 70 at Z = 6
     // With FOV 70 and Z = 6, we can see about 8.4 units height
     // So we want last section at camera Y = -4.2 (half of visible area)
     const desiredCameraYAtBottom = -4.2;
     const scrollMultiplier = Math.abs(desiredCameraYAtBottom / totalScrollDistance);
-    
+
     // Update the params with calculated multiplier (multiply by 0.001 for much finer control)
     params.scrollMultiplier = scrollMultiplier * 0.001;
-    
+
     console.log('First section center:', firstSectionCenter);
     console.log('Last section center:', lastSectionCenter);
     console.log('Total scroll distance:', totalScrollDistance);
     console.log('Calculated scroll multiplier:', scrollMultiplier);
   }
-  
+
   // Calculate section positions to match HTML sections
   const planeSize = planeSizeAtZ0();
   const sectionSpacing = planeSize.y; // Each section is one viewport height
-  
+
   // Define texture configurations - compressed spacing (move everything up one step except first)
   const textureConfigs = [
     { file: './public/new/section1.png', position: 0, z: 0 },                    // stays at 0
@@ -333,7 +336,7 @@ async function createTexturePlanes() {
   ];
 
   // Load all textures
-  const texturePromises = textureConfigs.map(config => 
+  const texturePromises = textureConfigs.map(config =>
     new Promise((resolve, reject) => {
       textureLoader.load(config.file, resolve, undefined, reject);
     })
@@ -341,14 +344,14 @@ async function createTexturePlanes() {
 
   try {
     const textures = await Promise.all(texturePromises);
-    
+
     // Create planes for each texture
     textureConfigs.forEach((config, index) => {
       const texture = textures[index];
-      
+
       // Create plane geometry - 12 wide, 8 tall
       const geometry = new THREE.PlaneGeometry(12, 8);
-      
+
       // Create material with additive blending
       const material = new THREE.MeshBasicMaterial({
         map: texture,
@@ -357,18 +360,18 @@ async function createTexturePlanes() {
         depthWrite: false,
         opacity: 0.8
       });
-      
+
       // Create mesh
       const plane = new THREE.Mesh(geometry, material);
-      
+
       // Position plane based on fixed position
       plane.position.set(0, config.position, config.z);
-      
+
       // Add to scene and store reference
       scene.add(plane);
       texturePlanes.push(plane);
     });
-    
+
     console.log(`Created ${texturePlanes.length} texture planes with additive blending`);
   } catch (error) {
     console.error('Error loading textures:', error);
@@ -379,7 +382,7 @@ async function createTexturePlanes() {
 function updateScrollCamera(deltaTime) {
   // Direct mapping without damping
   camera.position.y = targetCameraY;
-  
+
   // Update debug info
   updateDebugInfo();
 }
@@ -831,7 +834,7 @@ function onResize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   if (uniforms) uniforms.uPlane.value.copy(planeSizeAtZ0());
-  
+
   // Update texture plane scaling for new window size
   updateTexturePlanePositions();
 }
@@ -1234,7 +1237,8 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     uVisiblePercentage: { value: params.visiblePercentage },
     uMovePercentage: { value: params.movePercentage },
     uDeltaTime: { value: 0 },
-    uSequenceOffset: { value: 0 }
+    uSequenceOffset: { value: 0 },
+    uCameraY: { value: 0 }
   };
 
   const vertexShader = `
@@ -1263,6 +1267,7 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     uniform float uTurbulence2Scale;
     uniform float uTurbulence2Evolution;
     uniform float uSequenceOffset;
+    uniform float uCameraY;
 
     vec3 n3(vec3 p){
       return vec3(
@@ -1304,6 +1309,12 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
       vec3 wobble2 = n3(noiseCoord2 * 1.7 + uTime * uTurbulence2Speed + 100.0) * uTurbulence2Amount;
       
       vec3 turbulent = start + wobble1 + wobble2;
+
+      // Apply camera Y tracking to turbulent position (keeps local offset)
+      // When aProgress is 0 (not moving to target), particles follow camera Y
+      // When aProgress is 1 (moving to target), particles ignore camera Y tracking
+      float cameraYInfluence = 1.0 - aProgress;
+      turbulent.y += uCameraY * cameraYInfluence;
 
       // Use per-particle progress (already smoothstepped in JavaScript)
       vec3 instancePos = mix(turbulent, target, aProgress);
