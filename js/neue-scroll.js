@@ -35,8 +35,8 @@ const params = {
   softness: 0.2, // 0 = very soft, 1 = hard edge
   edgeFade: 0.3, // Controls fade range
   visiblePercentage: 1.0, // 0-1, percentage of particles that should be visible
-  fadeSpeedMin: 1, // Min frames to fade (30 = 0.5 sec at 60fps)
-  fadeSpeedMax: 3, // Max frames to fade (90 = 1.5 sec at 60fps)
+  fadeSpeedMin: 20, // Min frames to fade (30 = 0.5 sec at 60fps)
+  fadeSpeedMax: 30, // Max frames to fade (90 = 1.5 sec at 60fps)
   moveSpeedMin: 45, // Min frames to reach target position
   moveSpeedMax: 90, // Max frames to reach target position
   dragAmount: 0.05, // Amount of drag applied to particles
@@ -229,6 +229,13 @@ async function init() {
       fadeTimer = 0; // Reset when not at target
     }
 
+    // Update particle visibility based on state
+    if (params.movePercentage >= 1.0) {
+      updateParticleTargets(particles.geometry, 1.0); // All particles visible when at target
+    } else {
+      updateParticleTargets(particles.geometry, 0.22); // 22% visible when dispersed
+    }
+
     // Opacity control with 90-frame delay
     let particleOpacity, textureOpacity;
     if (fadeTimer < 90) {
@@ -242,11 +249,13 @@ async function init() {
       textureOpacity = fadeProgress;
     }
 
-    // Set uniform directly - don't modify params.visiblePercentage
-    if (fadeTimer >= 120) { // After 90 + 30 frames (fade complete)
-      uniforms.uVisiblePercentage.value = 0.0; // Particles completely invisible after fade
+    // Control global particle visibility via uVisiblePercentage
+    if (fadeTimer >= 120) {
+      uniforms.uVisiblePercentage.value = 0.0; // All particles invisible
+    } else if (fadeTimer >= 90) {
+      uniforms.uVisiblePercentage.value = particleOpacity; // Fade visible particles
     } else {
-      uniforms.uVisiblePercentage.value = params.visiblePercentage * particleOpacity;
+      uniforms.uVisiblePercentage.value = 1.0; // Full visibility for visible particles
     }
 
     // Apply texture opacity
@@ -414,7 +423,7 @@ function updateParticleParams(movePercentage, visiblePercentage, sequenceIndex) 
   if (visiblePercentage !== null) {
     params.visiblePercentage = visiblePercentage;
     if (uniforms) uniforms.uVisiblePercentage.value = visiblePercentage;
-    if (particles) updateParticleTargets(particles.geometry);
+    if (particles) updateParticleTargets(particles.geometry, visiblePercentage);
   }
 
   // Handle sequence switching - NO TIMING GUARDS, JUST SWITCH IMMEDIATELY
@@ -968,7 +977,7 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     uCameraY: { value: 0 }
   };
 
-   const vertexShader = `
+  const vertexShader = `
      attribute vec2 aInstanceUV;
      attribute vec2 aTargetUV;
      attribute vec3 aInstanceStart;
@@ -1229,6 +1238,7 @@ function makeTurbulentParticles(count) {
     uTime: { value: 0 },
     uPlane: { value: new THREE.Vector2(1, 1) },
     uImgAspect: { value: 1 }, // dummy
+    uVisiblePercentage: { value: 1.0 }, // turbulent always visible
     uParticleSizeTarget: { value: params.particleSizeTarget },
     uSoftness: { value: params.softness },
     uEdgeFade: { value: params.edgeFade },
@@ -1263,10 +1273,11 @@ function makeTurbulentParticles(count) {
     varying vec2 vUv;
     varying float vOpacity;
 
-    uniform float uTime;
-    uniform float uImgAspect;
-    uniform vec2 uPlane;
-    uniform float uParticleSizeTarget;
+     uniform float uTime;
+     uniform float uImgAspect;
+     uniform vec2 uPlane;
+     uniform float uVisiblePercentage;
+     uniform float uParticleSizeTarget;
     uniform float uTurbulence1Amount;
     uniform float uTurbulence1Speed;
     uniform float uTurbulence1Scale;
@@ -1290,7 +1301,7 @@ function makeTurbulentParticles(count) {
     void main(){
       vColor = aInstanceColor;
       vUv = uv;
-      vOpacity = aOpacity;
+       vOpacity = aOpacity * uVisiblePercentage;
 
       // Map target UV to image plane (for target position)
       float planeAspect = uPlane.x / uPlane.y;
@@ -1450,7 +1461,7 @@ function makeFrameHelper(planeVec2, imgAspect) {
 }
 
 // Update which particles should be visible based on percentage
-function updateParticleTargets(geometry) {
+function updateParticleTargets(geometry, visiblePercentage) {
   const count = geometry.attributes.aTargetOpacity.count;
   const targetOpacity = geometry.attributes.aTargetOpacity.array;
   const particleOrderVisibility = geometry.attributes.aParticleOrderVisibility.array;
@@ -1458,7 +1469,7 @@ function updateParticleTargets(geometry) {
   // Set target opacity based on VISIBILITY particle order
   // Particles with order < visiblePercentage should be visible
   for (let i = 0; i < count; i++) {
-    targetOpacity[i] = particleOrderVisibility[i] < params.visiblePercentage ? 1.0 : 0.0;
+    targetOpacity[i] = particleOrderVisibility[i] < visiblePercentage ? 1.0 : 0.0;
   }
 
   geometry.attributes.aTargetOpacity.needsUpdate = true;
