@@ -67,6 +67,11 @@ const params = {
   cameraOffsetZ: 6.0,
   cameraFOV: 70,
   scrollMultiplier: 0.01, // Scroll multiplier
+
+  // Texture plane controls
+  textureScale: 1.0, // Scale of texture within plane
+  textureOffsetX: 0.0, // X offset of texture
+  textureOffsetY: 0.0, // Y offset of texture
   scrollDamping: 0.11,
 
   // Turbulent particles
@@ -175,7 +180,8 @@ async function init() {
   const planeSize = planeSizeAtZ0();
   const sectionSpacing = planeSize.y;
   const initialIndex = params.sequenceIndex;
-  uniforms.uSequenceOffset.value = initialIndex <= 1 ? 0 : -sectionSpacing * (initialIndex - 1);
+  const spacingFactor = 0.8; // Match particle and texture plane spacing
+  uniforms.uSequenceOffset.value = initialIndex <= 1 ? 0 : -sectionSpacing * (initialIndex - 1) * spacingFactor;
 
   // Frame helper
   const frame = makeFrameHelper(uniforms.uPlane.value, initialData.wCells / initialData.hCells);
@@ -201,8 +207,8 @@ async function init() {
   // Create debug info display - DISABLED
   // createDebugInfo();
 
-  // Load textures and create planes - DISABLED
-  // await createTexturePlanes();
+  // Load textures and create planes
+  await createTexturePlanes();
 
   // Animate
   clock = new THREE.Clock();
@@ -482,117 +488,139 @@ function updateDebugInfo() {
   }
 }
 
-// Update texture plane sizes based on window size
+// Update texture planes to always be canvas-wide
 function updateTexturePlanePositions() {
   if (texturePlanes.length === 0) return;
 
-  // Get the visible plane size
+  // Calculate canvas-wide dimensions at Z=0 using proper frustum calculation
   const planeSize = planeSizeAtZ0();
-  const sectionSpacing = planeSize.y;
-
-  // Scale planes to fit the window properly
-  const baseScale = Math.min(planeSize.x / 12, planeSize.y / 8); // Original planes were 12x8
 
   texturePlanes.forEach((plane, index) => {
-    // Compressed spacing: section1=0, section2=0, section3=-1*spacing, section4=-2*spacing, section5=-3*spacing
-    plane.position.y = index <= 1 ? 0 : -sectionSpacing * (index - 1);
+    // Get texture aspect ratio
+    const texture = plane.material.map;
+    const textureAspect = texture.image ? texture.image.width / texture.image.height : 1.0;
+    const canvasAspect = planeSize.x / planeSize.y;
 
-    // Scale the plane itself
-    plane.scale.set(baseScale, baseScale, 1);
+    // Calculate plane dimensions to maintain texture aspect ratio
+    let planeWidth, planeHeight;
+    if (textureAspect > canvasAspect) {
+      // Texture is wider than canvas - fit width, scale height proportionally
+      planeWidth = planeSize.x;
+      planeHeight = planeSize.x / textureAspect;
+    } else {
+      // Texture is taller than canvas - fit height, scale width proportionally
+      planeHeight = planeSize.y;
+      planeWidth = planeSize.y * textureAspect;
+    }
+
+    // Recreate geometry with proper aspect ratio
+    plane.geometry.dispose();
+    plane.geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+
+    // Position vertically to match particle sequence offset
+    const spacingFactor = 0.8; // Match particle spacing
+    const yOffset = index <= 1 ? 0 : -planeSize.y * (index - 1) * spacingFactor;
+    plane.position.y = yOffset;
   });
 
   // Update sequence offset for current sequence
   if (uniforms && uniforms.uSequenceOffset) {
     const currentIndex = params.sequenceIndex;
-    uniforms.uSequenceOffset.value = currentIndex <= 1 ? 0 : -sectionSpacing * (currentIndex - 1);
+    const spacingFactor = 0.8; // Match particle spacing
+    uniforms.uSequenceOffset.value = currentIndex <= 1 ? 0 : -planeSize.y * (currentIndex - 1) * spacingFactor;
   }
+}
+
+// Update texture controls
+function updateTextureControls() {
+  if (texturePlanes.length === 0) return;
+
+  texturePlanes.forEach(plane => {
+    if (plane.material && plane.material.map) {
+      const texture = plane.material.map;
+      texture.repeat.set(params.textureScale, params.textureScale);
+      texture.offset.set(params.textureOffsetX, params.textureOffsetY);
+      texture.needsUpdate = true;
+    }
+  });
 }
 
 // Create texture planes with additive blending
 async function createTexturePlanes() {
   const textureLoader = new THREE.TextureLoader();
 
-  // Get first and last section elements to calculate proper scroll multiplier
-  const firstSection = document.getElementById('hero');
-  const lastSection = document.getElementById('section-5');
-
-  if (firstSection && lastSection) {
-    const firstSectionRect = firstSection.getBoundingClientRect();
-    const lastSectionRect = lastSection.getBoundingClientRect();
-
-    const firstSectionCenter = firstSectionRect.top + (firstSectionRect.height / 2);
-    const lastSectionCenter = lastSectionRect.top + (lastSectionRect.height / 2);
-
-    const totalScrollDistance = lastSectionCenter - firstSectionCenter;
-
-    // Calculate multiplier: first section center = camera Y = 0
-    // Last section center should map to camera Y that fits in FOV 70 at Z = 6
-    // With FOV 70 and Z = 6, we can see about 8.4 units height
-    // So we want last section at camera Y = -4.2 (half of visible area)
-    const desiredCameraYAtBottom = -4.2;
-    const scrollMultiplier = Math.abs(desiredCameraYAtBottom / totalScrollDistance);
-
-    // Update the params with calculated multiplier (multiply by 0.001 for much finer control)
-    params.scrollMultiplier = scrollMultiplier * 0.001;
-
-    console.log('First section center:', firstSectionCenter);
-    console.log('Last section center:', lastSectionCenter);
-    console.log('Total scroll distance:', totalScrollDistance);
-    console.log('Calculated scroll multiplier:', scrollMultiplier);
-  }
-
-  // Calculate section positions to match HTML sections
-  const planeSize = planeSizeAtZ0();
-  const sectionSpacing = planeSize.y; // Each section is one viewport height
-
-  // Define texture configurations - compressed spacing with reduced distance
-  const spacingFactor = 0.5; // Reduce spacing between targets
-  const textureConfigs = [
-    { file: './public/new/section1.png', position: 0, z: 0 },                    // stays at 0
-    { file: './public/new/section2.png', position: 0, z: 0 },                    // moved up to 0 (same as section1)
-    { file: './public/new/section3.png', position: -sectionSpacing * spacingFactor, z: 0 },      // moved up to -0.5*spacing
-    { file: './public/new/section4.png', position: -sectionSpacing * spacingFactor * 2, z: 0 },  // moved up to -1*spacing
-    { file: './public/new/section5.png', position: -sectionSpacing * spacingFactor * 3, z: 0 }   // moved up to -1.5*spacing
+  // Define texture configurations
+  const textureFiles = [
+    './public/new/section1.png',
+    './public/new/section2.png',
+    './public/new/section3.png',
+    './public/new/section4.png',
+    './public/new/section5.png'
   ];
 
   // Load all textures
-  const texturePromises = textureConfigs.map(config =>
+  const texturePromises = textureFiles.map(file =>
     new Promise((resolve, reject) => {
-      textureLoader.load(config.file, resolve, undefined, reject);
+      textureLoader.load(file, resolve, undefined, reject);
     })
   );
 
   try {
     const textures = await Promise.all(texturePromises);
 
-    // Create planes for each texture
-    textureConfigs.forEach((config, index) => {
+    // Create simple planes for each texture
+    textureFiles.forEach((file, index) => {
       const texture = textures[index];
 
-      // Create plane geometry - 12 wide, 8 tall
-      const geometry = new THREE.PlaneGeometry(12, 8);
+      // Create plane geometry with proper aspect ratio
+      const planeSize = planeSizeAtZ0();
+      const textureAspect = texture.image ? texture.image.width / texture.image.height : 1.0;
+      const canvasAspect = planeSize.x / planeSize.y;
 
-      // Create material with additive blending
+      // Calculate plane dimensions to maintain texture aspect ratio
+      let planeWidth, planeHeight;
+      if (textureAspect > canvasAspect) {
+        // Texture is wider than canvas - fit width, scale height proportionally
+        planeWidth = planeSize.x;
+        planeHeight = planeSize.x / textureAspect;
+      } else {
+        // Texture is taller than canvas - fit height, scale width proportionally
+        planeHeight = planeSize.y;
+        planeWidth = planeSize.y * textureAspect;
+      }
+
+      const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+
+      // Create simple material with texture
       const material = new THREE.MeshBasicMaterial({
         map: texture,
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
-        opacity: 0.8
+        opacity: 1.0,
+        color: 0xffffff
       });
+
+      // Apply texture controls
+      texture.repeat.set(params.textureScale, params.textureScale);
+      texture.offset.set(params.textureOffsetX, params.textureOffsetY);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
 
       // Create mesh
       const plane = new THREE.Mesh(geometry, material);
 
-      // Position plane based on fixed position
-      plane.position.set(0, config.position, config.z);
+      // Position at Z=0 with initial Y position matching particle sequence offset
+      const spacingFactor = 0.8;
+      const yOffset = index <= 1 ? 0 : -planeSize.y * (index - 1) * spacingFactor;
+      plane.position.set(0, yOffset, 0);
 
       // Add to scene and store reference
       scene.add(plane);
       texturePlanes.push(plane);
     });
 
-    console.log(`Created ${texturePlanes.length} texture planes with additive blending`);
+    console.log(`Created ${texturePlanes.length} simple texture planes`);
   } catch (error) {
     console.error('Error loading textures:', error);
   }
@@ -870,6 +898,25 @@ function setupGUI(frame) {
   cameraFolder.add(params, 'scrollDamping', 0.0001, 0.2, 0.0001)
     .name('Scroll Damping');
   cameraFolder.open();
+
+  // Texture Controls folder
+  const textureFolder = gui.addFolder('Texture Controls');
+  textureFolder.add(params, 'textureScale', 0.1, 5.0, 0.01)
+    .name('Texture Scale')
+    .onChange(v => {
+      updateTextureControls();
+    });
+  textureFolder.add(params, 'textureOffsetX', -2.0, 2.0, 0.01)
+    .name('Texture Offset X')
+    .onChange(v => {
+      updateTextureControls();
+    });
+  textureFolder.add(params, 'textureOffsetY', -2.0, 2.0, 0.01)
+    .name('Texture Offset Y')
+    .onChange(v => {
+      updateTextureControls();
+    });
+  textureFolder.open();
 
   // Animation System folder
   const animSystemFolder = gui.addFolder('Animation System');
