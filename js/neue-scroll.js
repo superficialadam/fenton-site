@@ -14,6 +14,8 @@ const CONFIG_URL = './config.json'; // Default config file
 const canvas = document.getElementById('bg-splats');
 const statsEl = document.getElementById('stats');
 
+// Fade transition system removed - using direct opacity control
+
 
 // Default parameters
 const params = {
@@ -33,8 +35,8 @@ const params = {
   softness: 0.2, // 0 = very soft, 1 = hard edge
   edgeFade: 0.3, // Controls fade range
   visiblePercentage: 1.0, // 0-1, percentage of particles that should be visible
-  fadeSpeedMin: 30, // Min frames to fade (30 = 0.5 sec at 60fps)
-  fadeSpeedMax: 90, // Max frames to fade (90 = 1.5 sec at 60fps)
+  fadeSpeedMin: 1, // Min frames to fade (30 = 0.5 sec at 60fps)
+  fadeSpeedMax: 3, // Max frames to fade (90 = 1.5 sec at 60fps)
   moveSpeedMin: 45, // Min frames to reach target position
   moveSpeedMax: 90, // Max frames to reach target position
   dragAmount: 0.05, // Amount of drag applied to particles
@@ -56,6 +58,8 @@ const params = {
   textureScale: 1.12, // Scale of texture within plane
   textureOffsetX: -0.06, // X offset of texture
   textureOffsetY: -0.06, // Y offset of texture
+
+  // Auto fade transition system removed - using direct opacity control
   scrollDamping: 0.11,
 
   // Turbulent particles
@@ -65,6 +69,7 @@ const params = {
 let renderer, scene, camera, particles, turbulentParticles, uniforms, turbulentUniforms, clock, gui, guiNeedsUpdate = false;
 let texturePlanes = [];
 let debugInfo;
+let fadeTimer = 0; // Timer for delay before texture fade in
 
 // Sequence data storage
 let sequenceData = []; // Array to store all loaded .bin data
@@ -217,6 +222,38 @@ async function init() {
     updateParticleMovement(particles.geometry, deltaTime);
     updateParticleDrag(particles.geometry, deltaTime);
 
+    // Update fade timer
+    if (params.movePercentage >= 1.0) {
+      fadeTimer += deltaTime * 60; // Increment in frames
+    } else {
+      fadeTimer = 0; // Reset when not at target
+    }
+
+    // Opacity control with 90-frame delay
+    let particleOpacity, textureOpacity;
+    if (fadeTimer < 90) {
+      // Particles visible, texture invisible during delay
+      particleOpacity = 1.0;
+      textureOpacity = 0.0;
+    } else {
+      // Fade texture in and particles out over 30 frames
+      const fadeProgress = Math.min((fadeTimer - 90) / 30, 1.0);
+      particleOpacity = 1.0 - fadeProgress;
+      textureOpacity = fadeProgress;
+    }
+
+    // Set uniform directly - don't modify params.visiblePercentage
+    if (fadeTimer >= 120) { // After 90 + 30 frames (fade complete)
+      uniforms.uVisiblePercentage.value = 0.0; // Particles completely invisible after fade
+    } else {
+      uniforms.uVisiblePercentage.value = params.visiblePercentage * particleOpacity;
+    }
+
+    // Apply texture opacity
+    if (texturePlanes[params.sequenceIndex]) {
+      texturePlanes[params.sequenceIndex].material.opacity = textureOpacity;
+    }
+
     // Update turbulent particles (they stay at default values)
     updateParticleVisibility(turbulentParticles.geometry, deltaTime);
     updateParticleMovement(turbulentParticles.geometry, deltaTime);
@@ -357,7 +394,7 @@ function updateScrollTransitions() {
 
       // DISPERSED STATE - no target, particles scattered
       case 'dispersed':
-        updateParticleParams(0.0, 0.22, null); // Keep dispersed, no sequence change
+        updateParticleParams(0.0, 1.0, null); // Keep dispersed, no sequence change
         break;
     }
   }
@@ -523,6 +560,12 @@ function updateTextureControls() {
   });
 }
 
+// Fade transition functions removed - using direct opacity control
+
+// Fade transition update removed - using direct opacity control
+
+// Transition trigger removed - using direct opacity control
+
 // Create texture planes with additive blending
 async function createTexturePlanes() {
   const textureLoader = new THREE.TextureLoader();
@@ -569,13 +612,13 @@ async function createTexturePlanes() {
 
       const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
 
-      // Create simple material with texture
+      // Create simple material with texture (start with opacity 0)
       const material = new THREE.MeshBasicMaterial({
         map: texture,
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
-        opacity: 1.0,
+        opacity: 0.0,
         color: 0xffffff
       });
 
@@ -925,25 +968,26 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     uCameraY: { value: 0 }
   };
 
-  const vertexShader = `
-    attribute vec2 aInstanceUV;
-    attribute vec2 aTargetUV;
-    attribute vec3 aInstanceStart;
-    attribute vec4 aInstanceColor;
-    attribute float aOpacity;
-    attribute float aProgress;
-    attribute float aRandomSize;
-    attribute float aPrevCameraY;
-    attribute float aDragSpeed;
-    
-    varying vec4 vColor;
-    varying vec2 vUv;
-    varying float vOpacity;
+   const vertexShader = `
+     attribute vec2 aInstanceUV;
+     attribute vec2 aTargetUV;
+     attribute vec3 aInstanceStart;
+     attribute vec4 aInstanceColor;
+     attribute float aOpacity;
+     attribute float aProgress;
+     attribute float aRandomSize;
+     attribute float aPrevCameraY;
+     attribute float aDragSpeed;
 
-    uniform float uTime;
-    uniform float uImgAspect;
-    uniform vec2 uPlane;
-    uniform float uParticleSizeTarget;
+     varying vec4 vColor;
+     varying vec2 vUv;
+     varying float vOpacity;
+
+     uniform float uTime;
+     uniform float uImgAspect;
+     uniform vec2 uPlane;
+     uniform float uVisiblePercentage;
+     uniform float uParticleSizeTarget;
     uniform float uTurbulence1Amount;
     uniform float uTurbulence1Speed;
     uniform float uTurbulence1Scale;
@@ -967,23 +1011,23 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
     void main(){
       vColor = aInstanceColor;
       vUv = uv;
-      vOpacity = aOpacity;
+       vOpacity = aOpacity * uVisiblePercentage;
 
-      // Map target UV to image plane (for target position)
-      float planeAspect = uPlane.x / uPlane.y;
-      vec2 p = aTargetUV * 2.0 - 1.0;
-      
-      if (planeAspect > uImgAspect) {
-        p.x *= (uImgAspect / planeAspect);
-      } else {
-        p.y *= (planeAspect / uImgAspect);
-      }
+       // Map target UV to image plane (for target position)
+       float planeAspect = uPlane.x / uPlane.y;
+       vec2 p = aTargetUV * 2.0 - 1.0;
 
-      
-      vec3 target = vec3(p * uPlane * 0.45, 0.0); 
-      
-      // Offset target position based on sequence index to match texture plane positions
-      target.y += uSequenceOffset;
+       if (planeAspect > uImgAspect) {
+         p.x *= (uImgAspect / planeAspect);
+       } else {
+         p.y *= (planeAspect / uImgAspect);
+       }
+
+
+       vec3 target = vec3(p * uPlane * 0.45, 0.0);
+
+       // Offset target position based on sequence index to match texture plane positions
+       target.y += uSequenceOffset;
 
       // Two layers of turbulence with evolution
       vec3 start = aInstanceStart;
