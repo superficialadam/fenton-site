@@ -55,11 +55,13 @@ const params = {
   scrollMultiplier: 0.01, // Scroll multiplier
 
   // Texture plane controls
-  textureScale: 1.12, // Scale of texture within plane
-  textureOffsetX: -0.06, // X offset of texture
-  textureOffsetY: -0.06, // Y offset of texture
+  textureScale: 1.11, // Scale of texture within plane
+  textureOffsetX: -0.055, // X offset of texture
+  textureOffsetY: -0.055, // Y offset of texture
 
-  // Auto fade transition system removed - using direct opacity control
+  // Fade timing parameters
+  holdFrames: 70, // Frames to hold particles at target before fading
+  fadeFrames: 10, // Frames for fade in/out transitions
   scrollDamping: 0.11,
 
   // Turbulent particles
@@ -236,23 +238,23 @@ async function init() {
       updateParticleTargets(particles.geometry, 0.22); // 22% visible when dispersed
     }
 
-    // Opacity control with 90-frame delay
+    // Opacity control with configurable delay
     let particleOpacity, textureOpacity;
-    if (fadeTimer < 90) {
+    if (fadeTimer < params.holdFrames) {
       // Particles visible, texture invisible during delay
       particleOpacity = 1.0;
       textureOpacity = 0.0;
     } else {
-      // Fade texture in and particles out over 30 frames
-      const fadeProgress = Math.min((fadeTimer - 90) / 30, 1.0);
+      // Fade texture in and particles out over fadeFrames
+      const fadeProgress = Math.min((fadeTimer - params.holdFrames) / params.fadeFrames, 1.0);
       particleOpacity = 1.0 - fadeProgress;
       textureOpacity = fadeProgress;
     }
 
     // Control global particle visibility via uVisiblePercentage
-    if (fadeTimer >= 120) {
+    if (fadeTimer >= params.holdFrames + params.fadeFrames) {
       uniforms.uVisiblePercentage.value = 0.0; // All particles invisible
-    } else if (fadeTimer >= 90) {
+    } else if (fadeTimer >= params.holdFrames) {
       uniforms.uVisiblePercentage.value = particleOpacity; // Fade visible particles
     } else {
       uniforms.uVisiblePercentage.value = 1.0; // Full visibility for visible particles
