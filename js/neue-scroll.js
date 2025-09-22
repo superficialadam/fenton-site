@@ -69,9 +69,9 @@ const params = {
   scrollMultiplier: 0.01, // Scroll multiplier
 
   // Texture plane controls
-  textureScale: 1.0, // Scale of texture within plane
-  textureOffsetX: 0.0, // X offset of texture
-  textureOffsetY: 0.0, // Y offset of texture
+  textureScale: 1.12, // Scale of texture within plane
+  textureOffsetX: -0.06, // X offset of texture
+  textureOffsetY: -0.06, // Y offset of texture
   scrollDamping: 0.11,
 
   // Turbulent particles
