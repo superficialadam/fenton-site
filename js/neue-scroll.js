@@ -13,6 +13,7 @@ const CONFIG_URL = './config.json'; // Default config file
 
 const canvas = document.getElementById('bg-splats');
 const statsEl = document.getElementById('stats');
+const bgVideo = document.getElementById('bg-video');
 
 // Fade transition system removed - using direct opacity control
 
@@ -81,6 +82,8 @@ let debugInfo;
 let fadeTimer = 0; // Timer for delay before texture fade in
 let startupTimer = 0; // Timer for startup sequence
 let startupPhase = 0; // 0: waiting 4s, 1: dispersed, 2: done
+let turbulentOpacity = 0.0; // Opacity for turbulent particles
+let videoFadeStarted = false; // Track if video fade has started
 
 // Sequence data storage
 let sequenceData = []; // Array to store all loaded .bin data
@@ -104,12 +107,12 @@ async function init() {
   renderer = new THREE.WebGLRenderer({
     canvas,
     antialias: false,
-    alpha: false,
+    alpha: true,
     powerPreference: 'high-performance'
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight, false);
-  renderer.setClearColor(params.backgroundColor);
+  renderer.setClearColor(0x000000, 0); // Transparent background
 
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(params.cameraFOV, window.innerWidth / window.innerHeight, 0.01, 100);
@@ -117,7 +120,7 @@ async function init() {
   currentCameraY = params.cameraOffsetY;
 
   // Expose for DevTools
-  Object.assign(window, { scene, camera, renderer });
+  Object.assign(window, { scene, camera, renderer, bgVideo });
 
   // Load all sequence files
   try {
@@ -168,11 +171,13 @@ async function init() {
   window.particleData = initialData;
   window.sequenceData = sequenceData;
 
-  uniforms = particles.material.uniforms;
-  uniforms.uPlane.value.copy(planeSizeAtZ0());
+   uniforms = particles.material.uniforms;
+   uniforms.uPlane.value.copy(planeSizeAtZ0());
+   uniforms.uVisiblePercentage.value = 0.0; // Start invisible
 
-  turbulentUniforms = turbulentParticles.material.uniforms;
-  turbulentUniforms.uPlane.value.copy(planeSizeAtZ0());
+   turbulentUniforms = turbulentParticles.material.uniforms;
+   turbulentUniforms.uPlane.value.copy(planeSizeAtZ0());
+   turbulentUniforms.uVisiblePercentage.value = turbulentOpacity;
 
   // Initialize sequence offset using configurable section offsets
   const sectionOffsets = [
@@ -184,11 +189,11 @@ async function init() {
   ];
   uniforms.uSequenceOffset.value = sectionOffsets[params.sequenceIndex];
 
-   // Initialize startup sequence: particles at first target (sequence 0) and visible
+   // Initialize startup sequence: particles at first target (sequence 0) but invisible
    params.sequenceIndex = 0; // Start at sequence 0
    params.movePercentage = 1.0;
    updateMovementTargets(particles.geometry);
-   updateParticleTargets(particles.geometry, 1.0); // Visible
+   updateParticleTargets(particles.geometry, 0.0); // Invisible
 
   // Frame helper
   const frame = makeFrameHelper(uniforms.uPlane.value, initialData.wCells / initialData.hCells);
@@ -246,6 +251,29 @@ async function init() {
 
     // Handle startup sequence
     startupTimer += deltaTime * 60; // Increment in frames
+
+    // Update turbulent opacity: fade up after 4 seconds over 2 seconds
+    if (startupTimer >= 240) {
+      turbulentOpacity = Math.min((startupTimer - 240) / 120, 1.0); // 2 seconds = 120 frames
+      turbulentUniforms.uVisiblePercentage.value = turbulentOpacity;
+      // Also set individual particle target opacity to 1.0 for proper fade in
+      updateParticleTargets(turbulentParticles.geometry, 1.0);
+    }
+
+    // Start video fade 10 frames after particles become visible
+    if (startupTimer >= 250 && !videoFadeStarted) { // 240 + 10 = 250 frames
+      videoFadeStarted = true;
+    }
+
+    // Handle video fade out over 4 frames
+    if (videoFadeStarted && bgVideo) {
+      const fadeProgress = Math.min((startupTimer - 250) / 4, 1.0); // 4 frame fade
+      bgVideo.style.opacity = 1.0 - fadeProgress;
+
+      if (fadeProgress >= 1.0) {
+        bgVideo.style.display = 'none';
+      }
+    }
 
     if (startupPhase === 0 && startupTimer >= 240) { // 4 seconds = 240 frames at 60fps
       // Disperse particles
@@ -942,17 +970,17 @@ function makeInstancedParticles({ count, wCells, hCells, uvs, colors }) {
   geometry.setAttribute('aParticleOrderVisibility', new THREE.InstancedBufferAttribute(particleOrderVisibility, 1));
   geometry.setAttribute('aParticleOrderMovement', new THREE.InstancedBufferAttribute(particleOrderMovement, 1));
 
-  // Current opacity for each particle (starts at 1)
+  // Current opacity for each particle (starts at 0 for invisible startup)
   const aOpacity = new Float32Array(count);
   for (let i = 0; i < count; i++) {
-    aOpacity[i] = 1.0;
+    aOpacity[i] = 0.0;
   }
   geometry.setAttribute('aOpacity', new THREE.InstancedBufferAttribute(aOpacity, 1));
 
   // Target opacity (what we're fading to)
   const aTargetOpacity = new Float32Array(count);
   for (let i = 0; i < count; i++) {
-    aTargetOpacity[i] = 1.0;
+    aTargetOpacity[i] = 0.0;
   }
   geometry.setAttribute('aTargetOpacity', new THREE.InstancedBufferAttribute(aTargetOpacity, 1));
 
@@ -1223,16 +1251,16 @@ function makeTurbulentParticles(count) {
   }
   geometry.setAttribute('aInstanceStart', new THREE.InstancedBufferAttribute(aStart, 3));
 
-  // Fade system attributes - always visible
+  // Fade system attributes - start invisible, fade in during startup
   const aOpacity = new Float32Array(count);
   for (let i = 0; i < count; i++) {
-    aOpacity[i] = 1.0;
+    aOpacity[i] = 0.0;
   }
   geometry.setAttribute('aOpacity', new THREE.InstancedBufferAttribute(aOpacity, 1));
 
   const aTargetOpacity = new Float32Array(count);
   for (let i = 0; i < count; i++) {
-    aTargetOpacity[i] = 1.0;
+    aTargetOpacity[i] = 0.0;
   }
   geometry.setAttribute('aTargetOpacity', new THREE.InstancedBufferAttribute(aTargetOpacity, 1));
 
@@ -1578,7 +1606,7 @@ function updateParticleVisibility(geometry, deltaTime) {
   if (!geometry.userData.fadeProgress) {
     geometry.userData.fadeProgress = new Float32Array(count);
     for (let i = 0; i < count; i++) {
-      geometry.userData.fadeProgress[i] = opacity[i]; // Initialize with current opacity
+      geometry.userData.fadeProgress[i] = 0.0; // Start invisible
     }
   }
   const fadeProgress = geometry.userData.fadeProgress;
