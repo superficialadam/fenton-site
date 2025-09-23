@@ -23,7 +23,7 @@ const params = {
   particleSizeMax: 0.09, // Random size max
   particleSizeTarget: 0.02, // Fixed size at target
   movePercentage: 1.0, // 0-1, percentage of particles that should move to target (start with step2 visible)
-  sequenceIndex: 1, // 0-4, which sequence step to target (start with step2)
+  sequenceIndex: 0, // 0-4, which sequence step to target (start with step2)
   turbulence1Amount: 3.23,
   turbulence1Speed: 0.6,
   turbulence1Scale: 0.9,
@@ -79,6 +79,8 @@ let renderer, scene, camera, particles, turbulentParticles, uniforms, turbulentU
 let texturePlanes = [];
 let debugInfo;
 let fadeTimer = 0; // Timer for delay before texture fade in
+let startupTimer = 0; // Timer for startup sequence
+let startupPhase = 0; // 0: waiting 4s, 1: dispersed, 2: done
 
 // Sequence data storage
 let sequenceData = []; // Array to store all loaded .bin data
@@ -182,6 +184,12 @@ async function init() {
   ];
   uniforms.uSequenceOffset.value = sectionOffsets[params.sequenceIndex];
 
+   // Initialize startup sequence: particles at first target (sequence 0) and visible
+   params.sequenceIndex = 0; // Start at sequence 0
+   params.movePercentage = 1.0;
+   updateMovementTargets(particles.geometry);
+   updateParticleTargets(particles.geometry, 1.0); // Visible
+
   // Frame helper
   const frame = makeFrameHelper(uniforms.uPlane.value, initialData.wCells / initialData.hCells);
   frame.visible = params.showFrame;
@@ -221,8 +229,10 @@ async function init() {
     turbulentUniforms.uTime.value = currentTime;
     turbulentUniforms.uDeltaTime.value = deltaTime;
 
-    // Update scroll-based camera movement
-    updateScrollCamera(deltaTime);
+    // Update scroll-based camera movement (only after startup)
+    if (startupPhase === 2) {
+      updateScrollCamera(deltaTime);
+    }
 
     // Update camera Y position for particle tracking
     uniforms.uCameraY.value = camera.position.y;
@@ -234,18 +244,39 @@ async function init() {
     updateParticleMovement(particles.geometry, deltaTime);
     updateParticleDrag(particles.geometry, deltaTime);
 
-    // Update fade timer
-    if (params.movePercentage >= 1.0) {
-      fadeTimer += deltaTime * 60; // Increment in frames
-    } else {
-      fadeTimer = 0; // Reset when not at target
+    // Handle startup sequence
+    startupTimer += deltaTime * 60; // Increment in frames
+
+    if (startupPhase === 0 && startupTimer >= 240) { // 4 seconds = 240 frames at 60fps
+      // Disperse particles
+      updateParticleTargets(particles.geometry, 0.22); // 22% visible
+      params.movePercentage = 0.0;
+      updateMovementTargets(particles.geometry);
+      startupPhase = 1;
+    } else if (startupPhase === 1 && startupTimer >= 240 + 120) { // After additional 120 frames
+      // Move to second target (sequence 1)
+      params.sequenceIndex = 1;
+      switchToSequence(1);
+      params.movePercentage = 1.0;
+      updateMovementTargets(particles.geometry);
+      updateParticleTargets(particles.geometry, 1.0); // All visible
+      startupPhase = 2;
     }
 
-    // Update particle visibility based on state
-    if (params.movePercentage >= 1.0) {
-      updateParticleTargets(particles.geometry, 1.0); // All particles visible when at target
-    } else {
-      updateParticleTargets(particles.geometry, 0.22); // 22% visible when dispersed
+    // Update fade timer (only after startup)
+    if (startupPhase === 2) {
+      if (params.movePercentage >= 1.0) {
+        fadeTimer += deltaTime * 60; // Increment in frames
+      } else {
+        fadeTimer = 0; // Reset when not at target
+      }
+
+      // Update particle visibility based on state
+      if (params.movePercentage >= 1.0) {
+        updateParticleTargets(particles.geometry, 1.0); // All particles visible when at target
+      } else {
+        updateParticleTargets(particles.geometry, 0.22); // 22% visible when dispersed
+      }
     }
 
     // Opacity control with configurable delay
@@ -290,18 +321,20 @@ async function init() {
 
 // Setup scroll listener
 function setupScrollListener() {
-  const updateScroll = () => {
-    scrollY = window.scrollY;
-    // Inverted scroll: negative scroll value moves camera up
-    targetCameraY = params.cameraOffsetY - (scrollY * 0.0086);
+   const updateScroll = () => {
+     scrollY = window.scrollY;
+     // Inverted scroll: negative scroll value moves camera up
+     targetCameraY = params.cameraOffsetY - (scrollY * 0.0086);
 
-    // Update scroll-based transitions
-    updateScrollTransitions();
+     // Update scroll-based transitions (only after startup)
+     if (startupPhase === 2) {
+       updateScrollTransitions();
+     }
 
-  };
+   };
 
-  window.addEventListener('scroll', updateScroll, { passive: true });
-  updateScroll(); // Initialize
+   window.addEventListener('scroll', updateScroll, { passive: true });
+   // Don't initialize scroll here, let startup handle initial state
 }
 
 // Scroll transition state tracking
@@ -1464,7 +1497,7 @@ function switchToSequence(newIndex) {
 
   const originalCount = newSequence.originalCount || newSequence.count;
   console.log(`Switched to sequence ${newIndex}: ${originalCount} original particles, ${maxParticleCount} total particles`);
-   console.log(`Sequence offset: ${sectionOffsets[newIndex]}`);
+  console.log(`Sequence offset: ${sectionOffsets[newIndex]}`);
   console.log('All particles will smoothly transition to new targets based on movePercentage');
 }
 
