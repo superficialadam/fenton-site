@@ -64,6 +64,13 @@ const params = {
   fadeFrames: 10, // Frames for fade in/out transitions
   scrollDamping: 0.11,
 
+  // Section Y offsets
+  section1_offset: 0.0, // Y offset for section 1 (step1)
+  section2_offset: 0.0, // Y offset for section 2 (step2)
+  section3_offset: -8.6, // Y offset for section 3 (step3)
+  section4_offset: -7.2, // Y offset for section 4 (step4)
+  section5_offset: -10.8, // Y offset for section 5 (step5)
+
   // Turbulent particles
   turbulentParticleCount: 400 // Number of always-turbulent particles
 };
@@ -165,12 +172,15 @@ async function init() {
   turbulentUniforms = turbulentParticles.material.uniforms;
   turbulentUniforms.uPlane.value.copy(planeSizeAtZ0());
 
-  // Initialize sequence offset for the initial sequence (compressed spacing)
-  const planeSize = planeSizeAtZ0();
-  const sectionSpacing = planeSize.y;
-  const initialIndex = params.sequenceIndex;
-  const spacingFactor = 0.8; // Match particle and texture plane spacing
-  uniforms.uSequenceOffset.value = initialIndex <= 1 ? 0 : -sectionSpacing * (initialIndex - 1) * spacingFactor;
+  // Initialize sequence offset using configurable section offsets
+  const sectionOffsets = [
+    params.section1_offset,
+    params.section2_offset,
+    params.section3_offset,
+    params.section4_offset,
+    params.section5_offset
+  ];
+  uniforms.uSequenceOffset.value = sectionOffsets[params.sequenceIndex];
 
   // Frame helper
   const frame = makeFrameHelper(uniforms.uPlane.value, initialData.wCells / initialData.hCells);
@@ -543,17 +553,27 @@ function updateTexturePlanePositions() {
     plane.geometry.dispose();
     plane.geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
 
-    // Position vertically to match particle sequence offset
-    const spacingFactor = 0.8; // Match particle spacing
-    const yOffset = index <= 1 ? 0 : -planeSize.y * (index - 1) * spacingFactor;
-    plane.position.y = yOffset;
+    // Position vertically using configurable section offsets
+    const sectionOffsets = [
+      params.section1_offset,
+      params.section2_offset,
+      params.section3_offset,
+      params.section4_offset,
+      params.section5_offset
+    ];
+    plane.position.y = sectionOffsets[index];
   });
 
   // Update sequence offset for current sequence
   if (uniforms && uniforms.uSequenceOffset) {
-    const currentIndex = params.sequenceIndex;
-    const spacingFactor = 0.8; // Match particle spacing
-    uniforms.uSequenceOffset.value = currentIndex <= 1 ? 0 : -planeSize.y * (currentIndex - 1) * spacingFactor;
+    const sectionOffsets = [
+      params.section1_offset,
+      params.section2_offset,
+      params.section3_offset,
+      params.section4_offset,
+      params.section5_offset
+    ];
+    uniforms.uSequenceOffset.value = sectionOffsets[params.sequenceIndex];
   }
 }
 
@@ -642,10 +662,15 @@ async function createTexturePlanes() {
       // Create mesh
       const plane = new THREE.Mesh(geometry, material);
 
-      // Position at Z=0 with initial Y position matching particle sequence offset
-      const spacingFactor = 0.8;
-      const yOffset = index <= 1 ? 0 : -planeSize.y * (index - 1) * spacingFactor;
-      plane.position.set(0, yOffset, 0);
+      // Position at Z=0 with initial Y position using configurable section offsets
+      const sectionOffsets = [
+        params.section1_offset,
+        params.section2_offset,
+        params.section3_offset,
+        params.section4_offset,
+        params.section5_offset
+      ];
+      plane.position.set(0, sectionOffsets[index], 0);
 
       // Add to scene and store reference
       scene.add(plane);
@@ -1427,17 +1452,19 @@ function switchToSequence(newIndex) {
   // Keep consistent aspect ratio using max dimensions (don't change on switch)
   // uniforms.uImgAspect.value remains the same for all sequences
 
-  // Update sequence offset to position particles at the correct texture plane location
-  // Compressed spacing: section1=0, section2=0, section3=-0.5*spacing, section4=-1*spacing, section5=-1.5*spacing
-  const planeSize = planeSizeAtZ0();
-  const sectionSpacing = planeSize.y;
-  const spacingFactor = 0.8; // Reduce spacing between targets
-  const sequenceOffset = newIndex <= 1 ? 0 : -sectionSpacing * (newIndex - 1) * spacingFactor; // Closer spacing
-  uniforms.uSequenceOffset.value = sequenceOffset;
+  // Set sequence offset using configurable section offsets
+  const sectionOffsets = [
+    params.section1_offset,
+    params.section2_offset,
+    params.section3_offset,
+    params.section4_offset,
+    params.section5_offset
+  ];
+  uniforms.uSequenceOffset.value = sectionOffsets[newIndex];
 
   const originalCount = newSequence.originalCount || newSequence.count;
   console.log(`Switched to sequence ${newIndex}: ${originalCount} original particles, ${maxParticleCount} total particles`);
-  console.log(`Sequence offset: ${sequenceOffset}`);
+   console.log(`Sequence offset: ${sectionOffsets[newIndex]}`);
   console.log('All particles will smoothly transition to new targets based on movePercentage');
 }
 
